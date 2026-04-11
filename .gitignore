@@ -8,6 +8,7 @@ venv/
 
 .alpha_pipeline/
 .alpha_pipeline_v2/
+.alpha_agent/
 
 wqb_1578.js
 wqb_index.js

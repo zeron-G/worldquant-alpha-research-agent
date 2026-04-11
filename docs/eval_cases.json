@@ -1,0 +1,29 @@
+[
+  {
+    "id": "social_focus_small_budget",
+    "budget": 12,
+    "family": ["social_buzz"],
+    "seed_fraction": 0.7,
+    "refine_top_k": 6,
+    "max_iterations": 8,
+    "random_seed": 7
+  },
+  {
+    "id": "news_sentiment_mix",
+    "budget": 16,
+    "family": ["news_attention", "social_sentiment"],
+    "seed_fraction": 0.6,
+    "refine_top_k": 8,
+    "max_iterations": 10,
+    "random_seed": 11
+  },
+  {
+    "id": "broad_search_default",
+    "budget": 20,
+    "family": [],
+    "seed_fraction": 0.65,
+    "refine_top_k": 10,
+    "max_iterations": 12,
+    "random_seed": 17
+  }
+]

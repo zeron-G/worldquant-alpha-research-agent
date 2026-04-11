@@ -1,200 +1,194 @@
-# WorldQuant BRAIN Alpha Research Pipeline
+# WorldQuant Alpha Research Agent
 
-A Python toolkit for researching, simulating, checking, and attempting submission of WorldQuant BRAIN alphas through the same production API flow used by the official frontend.
+Planner-driven, tool-using alpha research system for WorldQuant BRAIN with:
 
-This repository contains two layers:
+- automated candidate exploration and refinement loops
+- controlled simulation/check execution via existing API client
+- governance-first submission modes (`disabled`, `manual`, `auto_approved`)
+- reproducible JSON reports and baseline-vs-agent evaluation harness
+- interactive Streamlit app for live demo
 
-- `worldquant_brain_cli.py`: a low-level stdlib-only CLI for authentication, simulation, alpha inspection, checks, and submission.
-- `alpha_research_pipeline.py`: a higher-level research pipeline for seed generation, batch evaluation, leaderboard tracking, refinement, and controlled auto-submit attempts.
+Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https://github.com/zeron-G/worldquant-alpha-research-agent)
 
-The code in this repo is designed for repeatable alpha research rather than one-off manual experimentation. The main goal is to shorten the loop from:
+## Project Structure
 
-1. idea formation
-2. expression design
-3. parameter search
-4. check analysis
-5. local refinement
-6. submit attempt
+- `worldquant_brain_cli.py`  
+  Low-level API client and CLI (auth, simulate, check, submit, metadata fetch).
+- `alpha_research_pipeline.py`  
+  Baseline heuristic search pipeline (seed + refine + score + optional submit).
+- `alpha_research_agent.py`  
+  New planner-driven agent CLI entrypoint.
+- `alpha_agent/`  
+  Agent runtime modules:
+  - `config.py`: shared runtime dataclasses
+  - `planner.py`: heuristic planner + OpenAI JSON planner
+  - `engine.py`: orchestrator loop, tool execution, submission gating, run reports
+  - `evaluation.py`: baseline-vs-agent case-suite runner
+- `streamlit_app.py`  
+  Web app for interactive agent runs.
+- `docs/eval_cases.json`  
+  Starter replay case suite.
 
-## Highlights
+## Features
 
-- Uses only Python standard library.
-- Supports password login or reuse of an existing browser cookie.
-- Handles async simulation and async submit polling with `Retry-After`.
-- Stores research runs as JSONL for auditability and resumability.
-- Separates seed search from refinement search.
-- Deduplicates candidates by normalized `expression + settings`.
-- Includes a curated idea library with social, news, price reversion, and combo seeds.
-- Keeps secrets out of source control via environment-variable based configuration.
+### 1) End-to-end Alpha Agent Loop
 
-## Repository Layout
+The agent repeatedly executes:
 
-- `worldquant_brain_cli.py`: raw API client and CLI.
-- `alpha_research_pipeline.py`: batch research engine.
-- `alpha_pipeline_ideas.json`: manually curated seeds and family templates.
-- `wqb_data_fields_summary.json`: cached field-id snapshot used for candidate filtering.
-- `docs/API_RESEARCH.md`: endpoint and frontend reverse-engineering notes.
-- `docs/PIPELINE.md`: architecture and extension guide.
-- `docs/RESULTS_SUMMARY.md`: live-search findings and current best candidates.
-- `SECURITY.md`: credential handling and publishing guidance.
+1. gather frontier context
+2. choose next action (`evaluate_seed`, `evaluate_refine`, `evaluate_diversify`, `submit_best`, `stop`)
+3. call simulation/check tools
+4. update leaderboard and state
+5. log action rationale and outcomes
 
-## Safety First
+All run events are recorded under `<workdir>/agent_runs/*.json`.
 
-This repo intentionally does not include:
+### 2) Submission Governance
 
-- account email addresses
-- passwords
-- cookies
-- local run outputs
-- local submission logs
-- downloaded frontend bundles
+`submission_mode` controls risk:
 
-Before publishing, make sure you only configure secrets through environment variables or a local `.env` file that is ignored by git.
+- `disabled`: never submit
+- `manual`: submit only with explicit approval callback
+- `auto_approved`: allow unattended submit action when planner selects it
+
+By default, runs are safe (`disabled`).
+
+### 3) Pluggable Planning Backends
+
+- `heuristic`: deterministic planner (no model key needed)
+- `openai`: OpenAI-compatible JSON planner via `chat/completions`
+
+If OpenAI planner fails or key is missing, behavior falls back safely to heuristic planning.
+
+### 4) Evaluation Harness
+
+Run baseline pipeline and agent on the same case suite and budgets:
+
+- per-case score and latency deltas
+- aggregate win rate and average deltas
+- JSON report artifact for appendix/demo
 
 ## Requirements
 
 - Python 3.10+
-- A WorldQuant BRAIN account with API-capable access
+- WorldQuant BRAIN account access
+- Optional: OpenAI-compatible API key (only if using `--planner-provider openai`)
+- Optional: Streamlit for web UI
 
-## Quick Start
+Install dependencies:
 
-Clone the repo, then set environment variables locally.
+```powershell
+pip install -r requirements.txt
+```
+
+## Environment Variables
+
+Copy from `.env.example` and set locally (never commit secrets):
 
 ```powershell
 $env:WQB_EMAIL="your_email@example.com"
 $env:WQB_PASSWORD="your_password"
-```
-
-Or provide a live browser session cookie instead:
-
-```powershell
+# or
 $env:WQB_COOKIE_HEADER="sessionid=...; csrftoken=..."
+
+$env:ALPHA_AGENT_PLANNER_PROVIDER="heuristic"
+$env:ALPHA_AGENT_PLANNER_MODEL="gpt-4.1-mini"
+$env:ALPHA_AGENT_PLANNER_BASE_URL="https://api.openai.com/v1"
+$env:ALPHA_AGENT_PLANNER_API_KEY_ENV="OPENAI_API_KEY"
+$env:OPENAI_API_KEY="..."
 ```
 
-Inspect account-visible simulation options:
+## Quick Start
+
+### Run the agent from CLI
 
 ```powershell
-python .\worldquant_brain_cli.py --pretty options
+python .\alpha_research_agent.py --pretty run --budget 16 --max-iterations 10
 ```
 
-Inspect the operator catalog and data-field summary:
+Focus on a family:
 
 ```powershell
-python .\worldquant_brain_cli.py --pretty operators
-python .\worldquant_brain_cli.py --pretty data-fields > wqb_data_fields_summary.json
+python .\alpha_research_agent.py --pretty run --family social_buzz --budget 12
 ```
 
-Run a single simulation:
+Use OpenAI planner:
 
 ```powershell
-python .\worldquant_brain_cli.py --pretty simulate --expression "rank(ts_delta(close, 5))"
+python .\alpha_research_agent.py --pretty --planner-provider openai run --budget 16
 ```
 
-Check an existing alpha:
+Manual submit mode (requires terminal approval):
 
 ```powershell
-python .\worldquant_brain_cli.py --pretty check --alpha-id ABC123
+python .\alpha_research_agent.py --pretty run --submission-mode manual --interactive-approval
 ```
 
-Attempt submit on an existing alpha:
+### Show current leaderboard
 
 ```powershell
-python .\worldquant_brain_cli.py --pretty submit --alpha-id ABC123
+python .\alpha_research_agent.py --pretty leaderboard --limit 10
 ```
 
-## Research Pipeline Workflow
+### Run baseline-vs-agent evaluation
 
-Run a seed-heavy search:
+```powershell
+python .\alpha_research_agent.py --pretty evaluate --cases .\docs\eval_cases.json
+```
+
+Output defaults to:
+
+- `<workdir>/evaluation/report.json`
+
+### Run Streamlit app
+
+```powershell
+streamlit run .\streamlit_app.py
+```
+
+The app provides:
+
+- auth + planner config
+- run controls (budget/iterations/families)
+- submission safety mode controls
+- action timeline + leaderboard + raw JSON report
+
+## Basic Tests
+
+```powershell
+python -m unittest tests\test_planner.py
+```
+
+## Reproducibility Artifacts
+
+In agent workdir (`.alpha_agent` by default):
+
+- `results.jsonl`: evaluated candidate records
+- `submissions.jsonl`: submit attempts
+- `state.json`: rolling summary
+- `agent_runs/*.json`: full per-run reports with planner decisions and event logs
+- `evaluation/report.json`: baseline-vs-agent comparison report
+
+## Legacy Baseline Commands
+
+Baseline scripts remain available:
 
 ```powershell
 python .\alpha_research_pipeline.py --pretty search --budget 24 --seed-fraction 0.7
-```
-
-Focus on one family:
-
-```powershell
-python .\alpha_research_pipeline.py --pretty search --family social_buzz --budget 16
-```
-
-Resume and refine the current frontier:
-
-```powershell
-python .\alpha_research_pipeline.py --pretty search --family social_buzz --budget 12 --seed-fraction 0.1 --refine-top-k 12
-```
-
-Show the current leaderboard:
-
-```powershell
 python .\alpha_research_pipeline.py --pretty leaderboard --limit 10
-```
-
-Try to submit the best stored candidate that already clears blocking checks:
-
-```powershell
 python .\alpha_research_pipeline.py --pretty submit-best
 ```
 
-## How the Pipeline Thinks
+## Safety Notes
 
-The pipeline is intentionally opinionated:
-
-- Manual seeds get evaluated first because they encode domain knowledge.
-- Generated seeds come from reusable family templates in `alpha_pipeline_ideas.json`.
-- Results are ranked with a score that rewards Sharpe, Fitness, Returns, Margin, and passing checks.
-- Refinement mutations focus on the highest-leverage knobs:
-  - `decay`
-  - `neutralization`
-  - `universe`
-  - `truncation`
-  - template windows
-- If a family reaches the stage where basic quality checks pass but correlation checks fail, the pipeline treats that as a direction-level signal to diversify rather than endlessly over-refine the same family.
-- Auto-submit is conservative and only triggers when the candidate clears the blocking research checks already visible from the API.
-
-## Research State Persistence
-
-By default the pipeline writes to `.alpha_pipeline/`:
-
-- `results.jsonl`: one record per evaluated candidate
-- `submissions.jsonl`: one record per submit attempt
-- `state.json`: latest aggregate state
-
-You can isolate experiments by changing `--workdir`.
-
-## Current Research Findings
-
-The strongest discovered candidates are no longer failing on basic quality metrics. The search has already progressed into the harder stage where:
-
-- Sharpe is above the platform threshold
-- Fitness is at or above the threshold
-- turnover is inside limits
-- weight concentration is under control
-- self-correlation is close to or below the threshold
-
-The remaining bottleneck for the strongest combo candidates is usually `PROD_CORRELATION`, not raw alpha quality. See [docs/RESULTS_SUMMARY.md](docs/RESULTS_SUMMARY.md) for the current frontier.
-
-That is also why the pipeline now pivots away from correlation-blocked families and redistributes budget into more orthogonal families such as news, sentiment, fundamentals, and structurally different price combinations.
-
-## Extending the Idea Library
-
-`alpha_pipeline_ideas.json` supports two entry points:
-
-- `manual_seeds`: hand-picked candidates that should always be tried early
-- `families`: templated search spaces over fields, windows, signs, and settings grids
-
-This makes it easy to add new research families without changing pipeline code.
-
-## Reverse-Engineering Notes
-
-The implementation is based on live observations from official WorldQuant-owned properties and the production frontend bundle, not an official standalone public API specification.
-
-See:
-
-- [docs/API_RESEARCH.md](docs/API_RESEARCH.md)
-- [SECURITY.md](SECURITY.md)
+- Never commit credentials, cookies, keys, or private account data.
+- Use `.env` and ignored local files for secrets.
+- Keep `submission_mode=disabled` for research unless you intentionally enable stronger modes.
+- Prefer manual approval for live demos and classroom evaluation.
 
 ## Disclaimer
 
-Use this repository responsibly and only with credentials and permissions you are authorized to use. Platform behavior, available endpoints, and account capabilities may change over time.
+Use responsibly and only with authorized credentials and permissions. Platform behavior and available endpoints may change over time.
 
 ## License
 
