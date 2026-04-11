@@ -122,18 +122,42 @@ def add_common_agent_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_run_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--budget", type=int, default=24)
-    parser.add_argument("--max-iterations", type=int, default=12)
-    parser.add_argument("--seed-fraction", type=float, default=0.7)
-    parser.add_argument("--refine-top-k", type=int, default=8)
+    parser.add_argument("--budget", type=int, default=int(os.getenv("ALPHA_AGENT_BUDGET", "24")))
+    parser.add_argument("--max-iterations", type=int, default=int(os.getenv("ALPHA_AGENT_MAX_ITERATIONS", "12")))
+    parser.add_argument("--seed-fraction", type=float, default=float(os.getenv("ALPHA_AGENT_SEED_FRACTION", "0.7")))
+    parser.add_argument("--refine-top-k", type=int, default=int(os.getenv("ALPHA_AGENT_REFINE_TOP_K", "8")))
+    parser.add_argument(
+        "--robustness-top-k",
+        type=int,
+        default=int(os.getenv("ALPHA_AGENT_ROBUSTNESS_TOP_K", "3")),
+    )
+    parser.add_argument(
+        "--robustness-score-threshold",
+        type=float,
+        default=float(os.getenv("ALPHA_AGENT_ROBUSTNESS_SCORE_THRESHOLD", "500")),
+    )
     parser.add_argument("--family", action="append", default=[], help="Optional family filter (repeatable).")
+    parser.add_argument(
+        "--max-family-budget-share",
+        type=float,
+        default=float(os.getenv("ALPHA_AGENT_MAX_FAMILY_BUDGET_SHARE", "0.45")),
+    )
+    parser.add_argument(
+        "--min-expression-novelty",
+        type=float,
+        default=float(os.getenv("ALPHA_AGENT_MIN_EXPRESSION_NOVELTY", "0.10")),
+    )
     parser.add_argument("--shuffle-seeds", action="store_true", default=True, help="Shuffle generated seeds.")
     parser.add_argument("--no-shuffle-seeds", action="store_false", dest="shuffle_seeds")
-    parser.add_argument("--random-seed", type=int, default=7)
-    parser.add_argument("--retries", type=int, default=2)
-    parser.add_argument("--sleep-between", type=float, default=1.0)
-    parser.add_argument("--max-wait", type=float, default=DEFAULT_MAX_WAIT)
-    parser.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL)
+    parser.add_argument("--random-seed", type=int, default=int(os.getenv("ALPHA_AGENT_RANDOM_SEED", "7")))
+    parser.add_argument("--retries", type=int, default=int(os.getenv("ALPHA_AGENT_RETRIES", "2")))
+    parser.add_argument("--sleep-between", type=float, default=float(os.getenv("ALPHA_AGENT_SLEEP_BETWEEN", "1.0")))
+    parser.add_argument("--max-wait", type=float, default=float(os.getenv("WQB_MAX_WAIT", str(DEFAULT_MAX_WAIT))))
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=float(os.getenv("WQB_POLL_INTERVAL", str(DEFAULT_POLL_INTERVAL))),
+    )
     parser.add_argument("--allow-pending-checks", action="store_true")
     parser.add_argument(
         "--submission-mode",
@@ -201,7 +225,11 @@ def build_runtime(args: argparse.Namespace, run_overrides: Optional[Dict[str, An
         max_iterations=getattr(args, "max_iterations", 12),
         seed_fraction=getattr(args, "seed_fraction", 0.7),
         refine_top_k=getattr(args, "refine_top_k", 8),
+        robustness_top_k=getattr(args, "robustness_top_k", 3),
+        robustness_score_threshold=getattr(args, "robustness_score_threshold", 500.0),
         family_filter=tuple(getattr(args, "family", []) or ()),
+        max_family_budget_share=getattr(args, "max_family_budget_share", 0.45),
+        min_expression_novelty=getattr(args, "min_expression_novelty", 0.10),
         shuffle_seeds=getattr(args, "shuffle_seeds", True),
         random_seed=getattr(args, "random_seed", 7),
         retries=getattr(args, "retries", 2),

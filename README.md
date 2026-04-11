@@ -2,9 +2,10 @@
 
 Planner-driven, tool-using alpha research system for WorldQuant BRAIN with:
 
-- automated candidate exploration and refinement loops
+- stage-aware candidate exploration, exploitation, robustness testing, and harvesting
 - controlled simulation/check execution via existing API client
 - governance-first submission modes (`disabled`, `manual`, `auto_approved`)
+- hypothesis logging and failure-pattern-aware mutation logic
 - reproducible JSON reports and baseline-vs-agent evaluation harness
 - interactive Streamlit app for live demo
 
@@ -22,6 +23,7 @@ Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https:/
   Agent runtime modules:
   - `config.py`: shared runtime dataclasses
   - `planner.py`: heuristic planner + OpenAI JSON planner
+  - `research_logic.py`: quant-style stage logic, novelty scoring, check-aware and robustness candidate builders
   - `engine.py`: orchestrator loop, tool execution, submission gating, run reports
   - `evaluation.py`: baseline-vs-agent case-suite runner
 - `streamlit_app.py`  
@@ -35,15 +37,44 @@ Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https:/
 
 The agent repeatedly executes:
 
-1. gather frontier context
-2. choose next action (`evaluate_seed`, `evaluate_refine`, `evaluate_diversify`, `submit_best`, `stop`)
+1. gather frontier context (family performance, failed-check histogram, stage, hypotheses)
+2. choose next action (`evaluate_seed`, `evaluate_refine`, `evaluate_diversify`, `evaluate_robustness`, `submit_best`, `stop`)
 3. call simulation/check tools
-4. update leaderboard and state
-5. log action rationale and outcomes
+4. update leaderboard, stage, and research notebook
+5. log rationale, hypothesis, risk note, and outcomes
 
 All run events are recorded under `<workdir>/agent_runs/*.json`.
 
-### 2) Submission Governance
+### 2) Quant-Style Stage Policy
+
+The agent follows four research stages:
+
+- `explore`: maximize family and expression diversity under budget constraints
+- `exploit`: target dominant failure checks with check-aware refinements
+- `robustness`: stress-test top candidates across universe/neutralization/truncation perturbations
+- `harvest`: attempt controlled submission only when readiness and governance align
+
+Transitions are data-driven by score quality, submit-readiness, and robustness evidence.
+
+### 3) Prompt Contract (OpenAI Planner)
+
+When `--planner-provider openai` is enabled, the planner receives a structured context and must return strict JSON:
+
+```json
+{
+  "action": "evaluate_refine",
+  "batch_size": 3,
+  "rationale": "...",
+  "hypothesis": "...",
+  "focus_family": "news_attention",
+  "risk_note": "...",
+  "target_alpha_id": null
+}
+```
+
+This enforces reproducible, auditable planner decisions instead of free-form text.
+
+### 4) Submission Governance
 
 `submission_mode` controls risk:
 
@@ -53,14 +84,14 @@ All run events are recorded under `<workdir>/agent_runs/*.json`.
 
 By default, runs are safe (`disabled`).
 
-### 3) Pluggable Planning Backends
+### 5) Pluggable Planning Backends
 
 - `heuristic`: deterministic planner (no model key needed)
 - `openai`: OpenAI-compatible JSON planner via `chat/completions`
 
 If OpenAI planner fails or key is missing, behavior falls back safely to heuristic planning.
 
-### 4) Evaluation Harness
+### 6) Evaluation Harness
 
 Run baseline pipeline and agent on the same case suite and budgets:
 
@@ -104,6 +135,12 @@ $env:OPENAI_API_KEY="..."
 
 ```powershell
 python .\alpha_research_agent.py --pretty run --budget 16 --max-iterations 10
+```
+
+Quant-style tuning example:
+
+```powershell
+python .\alpha_research_agent.py --pretty run --budget 20 --refine-top-k 10 --robustness-top-k 4 --robustness-score-threshold 550 --max-family-budget-share 0.4 --min-expression-novelty 0.12
 ```
 
 Focus on a family:
@@ -150,13 +187,14 @@ The app provides:
 
 - auth + planner config
 - run controls (budget/iterations/families)
+- quant controls (family budget share, novelty threshold, robustness gates)
 - submission safety mode controls
-- action timeline + leaderboard + raw JSON report
+- action timeline + stage history + hypothesis log + raw JSON report
 
 ## Basic Tests
 
 ```powershell
-python -m unittest tests\test_planner.py
+python -m unittest tests\test_planner.py tests\test_research_logic.py
 ```
 
 ## Reproducibility Artifacts

@@ -33,9 +33,13 @@ class AgentConfig:
     max_iterations: int = 12
     seed_fraction: float = 0.7
     refine_top_k: int = 8
+    robustness_top_k: int = 3
+    robustness_score_threshold: float = 500.0
     family_filter: tuple[str, ...] = ()
     shuffle_seeds: bool = True
     random_seed: int = 7
+    max_family_budget_share: float = 0.45
+    min_expression_novelty: float = 0.10
     retries: int = 2
     sleep_between: float = 1.0
     max_wait: float = DEFAULT_MAX_WAIT

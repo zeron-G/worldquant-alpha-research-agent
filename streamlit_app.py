@@ -29,6 +29,7 @@ def render_summary(summary: Dict[str, Any]) -> None:
     cols[2].metric("Evaluated This Run", summary.get("evaluated_this_run"))
     cols[3].metric("Submittable Count", summary.get("submittable_count"))
     cols[4].metric("Submission Attempts", summary.get("submission_attempts_this_run"))
+    st.write(f"Research stage: `{summary.get('final_stage')}`")
     st.write(f"Stop reason: `{summary.get('stop_reason')}`")
 
 
@@ -66,7 +67,17 @@ with st.sidebar:
     max_iterations = st.number_input("Max Iterations", min_value=1, max_value=100, value=12, step=1)
     seed_fraction = st.slider("Seed Fraction", min_value=0.05, max_value=0.95, value=0.7, step=0.05)
     refine_top_k = st.number_input("Refine Top K", min_value=1, max_value=100, value=8, step=1)
+    robustness_top_k = st.number_input("Robustness Top K", min_value=1, max_value=20, value=3, step=1)
+    robustness_score_threshold = st.number_input(
+        "Robustness Score Threshold",
+        min_value=-500.0,
+        max_value=3000.0,
+        value=500.0,
+        step=10.0,
+    )
     family_filter_raw = st.text_input("Family Filter (comma-separated)", value="")
+    max_family_budget_share = st.slider("Max Family Budget Share", min_value=0.1, max_value=1.0, value=0.45, step=0.05)
+    min_expression_novelty = st.slider("Min Expression Novelty", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
     random_seed = st.number_input("Random Seed", min_value=0, max_value=10_000, value=7, step=1)
     retries = st.number_input("Retries", min_value=0, max_value=10, value=2, step=1)
     sleep_between = st.number_input("Sleep Between Requests (sec)", min_value=0.0, max_value=10.0, value=1.0, step=0.5)
@@ -118,7 +129,11 @@ if run_clicked:
             max_iterations=int(max_iterations),
             seed_fraction=float(seed_fraction),
             refine_top_k=int(refine_top_k),
+            robustness_top_k=int(robustness_top_k),
+            robustness_score_threshold=float(robustness_score_threshold),
             family_filter=family_filter,
+            max_family_budget_share=float(max_family_budget_share),
+            min_expression_novelty=float(min_expression_novelty),
             random_seed=int(random_seed),
             retries=int(retries),
             sleep_between=float(sleep_between),
@@ -168,3 +183,13 @@ if result_payload:
 
     with st.expander("Raw JSON Result", expanded=False):
         st.code(json.dumps(result_payload, ensure_ascii=False, indent=2), language="json")
+
+    stage_history = summary.get("stage_history") or []
+    if stage_history:
+        st.subheader("Stage History")
+        st.dataframe(stage_history, use_container_width=True)
+
+    hypothesis_tail = summary.get("hypothesis_log_tail") or []
+    if hypothesis_tail:
+        st.subheader("Hypothesis Log (Tail)")
+        st.dataframe(hypothesis_tail, use_container_width=True)

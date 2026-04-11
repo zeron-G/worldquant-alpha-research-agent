@@ -11,6 +11,13 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import alpha_research_pipeline as pipeline
 from alpha_agent.config import AgentRuntimeConfig
 from alpha_agent.planner import HeuristicPlanner, PlannerAction
+from alpha_agent.research_logic import (
+    ResearchNotebook,
+    build_check_aware_refinements,
+    build_robustness_candidates,
+    dedupe_candidates,
+    safe_float,
+)
 from worldquant_brain_cli import BrainApiError, BrainClient
 
 
@@ -132,29 +139,60 @@ class ResearchToolbox:
         self.seed_queue = self.seed_queue[count:]
         return batch
 
-    def preview_refine_candidates(self) -> Tuple[List[pipeline.Candidate], set[str]]:
-        leaderboard = self.leaderboard(limit=max(10, self.agent_cfg.refine_top_k))
-        top_records = leaderboard[: self.agent_cfg.refine_top_k]
+    def leaderboard(self, *, limit: int = 10) -> List[Dict[str, Any]]:
+        return pipeline.build_leaderboard(
+            self.results,
+            family_filter=set(self.agent_cfg.family_filter),
+            limit=limit,
+        )
+
+    def preview_refine_candidates(
+        self,
+        *,
+        frontier_records: Sequence[Dict[str, Any]],
+    ) -> Tuple[List[pipeline.Candidate], set[str], List[Dict[str, Any]]]:
+        top_records = list(frontier_records[: self.agent_cfg.refine_top_k])
         blocked_families = pipeline.correlation_pivot_families(top_records)
-        candidates = pipeline.build_refinement_candidates(
+        generic = pipeline.build_refinement_candidates(
             top_records,
             family_filter=set(self.agent_cfg.family_filter),
             blocked_families=blocked_families,
         )
+        check_aware = build_check_aware_refinements(
+            top_records,
+            family_filter=set(self.agent_cfg.family_filter),
+            blocked_families=blocked_families,
+        )
+        merged = dedupe_candidates(check_aware + generic)
         fresh = [
             candidate
-            for candidate in candidates
+            for candidate in merged
             if candidate.signature() not in self.evaluated_signatures
         ]
-        return fresh, blocked_families
+        return fresh, blocked_families, top_records
 
     def preview_diversification_candidates(self, blocked_families: set[str]) -> List[pipeline.Candidate]:
-        candidates = pipeline.build_diversification_candidates(
+        return pipeline.build_diversification_candidates(
             seeds=self.all_ordered_seeds,
             excluded_signatures=self.evaluated_signatures,
             blocked_families=blocked_families,
         )
-        return candidates
+
+    def preview_robustness_candidates(
+        self,
+        *,
+        frontier_records: Sequence[Dict[str, Any]],
+    ) -> List[pipeline.Candidate]:
+        candidates = build_robustness_candidates(
+            frontier_records,
+            family_filter=set(self.agent_cfg.family_filter),
+            top_k=self.agent_cfg.robustness_top_k,
+        )
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.signature() not in self.evaluated_signatures
+        ]
 
     def evaluate_candidates(self, candidates: Sequence[pipeline.Candidate]) -> List[Dict[str, Any]]:
         if not candidates:
@@ -177,13 +215,6 @@ class ResearchToolbox:
         )
         self.refresh_records()
         return evaluated
-
-    def leaderboard(self, *, limit: int = 10) -> List[Dict[str, Any]]:
-        return pipeline.build_leaderboard(
-            self.results,
-            family_filter=set(self.agent_cfg.family_filter),
-            limit=limit,
-        )
 
     def best_submittable_candidate(self, *, target_alpha_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         allow_pending = self.agent_cfg.allow_pending_checks
@@ -239,18 +270,27 @@ class AlphaResearchAgent:
         self.events: List[Dict[str, Any]] = []
         self.submission_attempts: List[Dict[str, Any]] = []
         self.seed_evaluated_count = 0
+        self.notebook = ResearchNotebook(
+            budget=max(1, int(runtime.agent.budget)),
+            max_family_budget_share=runtime.agent.max_family_budget_share,
+            min_expression_novelty=runtime.agent.min_expression_novelty,
+            robustness_score_threshold=runtime.agent.robustness_score_threshold,
+        )
 
     def run(self) -> AgentRunResult:
         started_at = pipeline.iso_now()
         run_id = self._build_run_id(started_at)
         budget = max(0, int(self.runtime.agent.budget))
-        seed_target = min(
-            budget,
-            max(1, int(math.ceil(budget * float(self.runtime.agent.seed_fraction)))),
-        ) if budget > 0 else 0
+        seed_target = (
+            min(budget, max(1, int(math.ceil(budget * float(self.runtime.agent.seed_fraction)))))
+            if budget > 0
+            else 0
+        )
         evaluated_total = 0
+        evaluated_this_run = 0
         stop_reason = "Completed."
         iteration_executed = 0
+        current_stage = "explore"
 
         for iteration in range(1, self.runtime.agent.max_iterations + 1):
             iteration_executed = iteration
@@ -260,31 +300,77 @@ class AlphaResearchAgent:
                 break
 
             self.toolbox.refresh_seed_queue()
-            refine_candidates, blocked_families = self.toolbox.preview_refine_candidates()
+            frontier = self.toolbox.leaderboard(limit=max(20, self.runtime.agent.refine_top_k))
+            current_stage, stage_reason = self.notebook.determine_stage(
+                iteration=iteration,
+                evaluated_total=evaluated_total,
+                seed_target=seed_target,
+                leaderboard=frontier,
+                records=self.toolbox.results,
+            )
+            refine_candidates, blocked_families, _ = self.toolbox.preview_refine_candidates(
+                frontier_records=frontier
+            )
             diversify_candidates = self.toolbox.preview_diversification_candidates(blocked_families)
+            robustness_candidates = self.toolbox.preview_robustness_candidates(frontier_records=frontier)
+
+            ranked_refine = self.notebook.rank_candidates(
+                candidates=refine_candidates,
+                frontier_records=frontier,
+                stage=current_stage,
+                blocked_families=blocked_families,
+            )
+            ranked_diversify = self.notebook.rank_candidates(
+                candidates=diversify_candidates,
+                frontier_records=frontier,
+                stage=current_stage,
+                blocked_families=blocked_families,
+            )
+            ranked_robustness = self.notebook.rank_candidates(
+                candidates=robustness_candidates,
+                frontier_records=frontier,
+                stage="robustness",
+                blocked_families=set(),
+            )
+
             context = self._build_context(
                 iteration=iteration,
                 budget=budget,
                 evaluated_total=evaluated_total,
                 seed_target=seed_target,
-                refine_candidates=refine_candidates,
-                diversify_candidates=diversify_candidates,
+                stage=current_stage,
+                stage_reason=stage_reason,
+                refine_candidates=ranked_refine,
+                diversify_candidates=ranked_diversify,
+                robustness_candidates=ranked_robustness,
+                frontier=frontier,
             )
-            decision = self._decide(context)
-            decision = decision.clamped(remaining_budget)
+            decision = self._decide(context).clamped(remaining_budget)
+            self.notebook.record_hypothesis(
+                iteration=iteration,
+                stage=current_stage,
+                action=decision.action,
+                hypothesis=decision.hypothesis or "No explicit hypothesis provided.",
+                rationale=decision.rationale,
+                focus_family=decision.focus_family,
+                risk_note=decision.risk_note,
+            )
 
             if decision.action == "stop":
                 stop_reason = decision.rationale or "Planner requested stop."
                 self._append_event(
                     iteration=iteration,
+                    stage=current_stage,
                     action="stop",
                     rationale=stop_reason,
                     details={"planner_context": context},
+                    hypothesis=decision.hypothesis,
+                    risk_note=decision.risk_note,
                 )
                 break
 
             if decision.action == "submit_best":
-                submission_outcome = self._execute_submit_action(decision, iteration)
+                submission_outcome = self._execute_submit_action(decision, iteration, current_stage)
                 if submission_outcome is not None:
                     self.submission_attempts.append(submission_outcome)
                 self.toolbox.write_state()
@@ -292,24 +378,57 @@ class AlphaResearchAgent:
 
             batch: List[pipeline.Candidate] = []
             if decision.action == "evaluate_seed":
-                batch = self.toolbox.pop_seed_candidates(decision.batch_size)
+                raw_seed_batch = self.toolbox.pop_seed_candidates(max(decision.batch_size * 2, decision.batch_size))
+                batch = self._select_batch(
+                    candidates=raw_seed_batch,
+                    batch_size=decision.batch_size,
+                    stage=current_stage,
+                    frontier=frontier,
+                    blocked_families=blocked_families,
+                )
             elif decision.action == "evaluate_refine":
-                batch = refine_candidates[: decision.batch_size]
+                batch = self._select_batch(
+                    candidates=ranked_refine,
+                    batch_size=decision.batch_size,
+                    stage=current_stage,
+                    frontier=frontier,
+                    blocked_families=blocked_families,
+                )
             elif decision.action == "evaluate_diversify":
-                batch = diversify_candidates[: decision.batch_size]
+                batch = self._select_batch(
+                    candidates=ranked_diversify,
+                    batch_size=decision.batch_size,
+                    stage=current_stage,
+                    frontier=frontier,
+                    blocked_families=blocked_families,
+                )
+            elif decision.action == "evaluate_robustness":
+                batch = self._select_batch(
+                    candidates=ranked_robustness,
+                    batch_size=decision.batch_size,
+                    stage="robustness",
+                    frontier=frontier,
+                    blocked_families=set(),
+                    enforce_family_cap=False,
+                )
 
             if not batch:
                 stop_reason = f"No candidates available for {decision.action}."
                 self._append_event(
                     iteration=iteration,
+                    stage=current_stage,
                     action=decision.action,
                     rationale=decision.rationale,
                     details={"requested_batch": decision.batch_size, "executed_batch": 0},
+                    hypothesis=decision.hypothesis,
+                    risk_note=decision.risk_note,
                 )
                 continue
 
             records = self.toolbox.evaluate_candidates(batch)
+            self.notebook.observe_records(records)
             evaluated_total += len(records)
+            evaluated_this_run += len(records)
             if decision.action == "evaluate_seed":
                 self.seed_evaluated_count += len(records)
 
@@ -319,14 +438,19 @@ class AlphaResearchAgent:
                 "ok_count": sum(1 for record in records if record.get("status") == "ok"),
                 "error_count": sum(1 for record in records if record.get("status") == "error"),
                 "submittable_count": sum(1 for record in records if record.get("precheck_submit_ready")),
+                "families": sorted({str(record.get("family") or "") for record in records}),
+                "failed_check_histogram": self.notebook.failed_check_histogram(self.toolbox.results, top_k=5),
                 "best_score_after": self._best_score(),
                 "best_alpha_after": self._best_alpha_id(),
             }
             self._append_event(
                 iteration=iteration,
+                stage=current_stage,
                 action=decision.action,
                 rationale=decision.rationale,
                 details=event_details,
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             self.toolbox.write_state()
 
@@ -339,11 +463,7 @@ class AlphaResearchAgent:
             "finished_at": finished_at,
             "budget": budget,
             "evaluated_count": len(self.toolbox.results),
-            "evaluated_this_run": sum(
-                int(event.get("details", {}).get("executed_batch") or 0)
-                for event in self.events
-                if event.get("action", "").startswith("evaluate_")
-            ),
+            "evaluated_this_run": evaluated_this_run,
             "seed_evaluated_this_run": self.seed_evaluated_count,
             "submission_attempts_this_run": len(self.submission_attempts),
             "best_score": self._best_score(),
@@ -352,6 +472,11 @@ class AlphaResearchAgent:
             "iterations_executed": iteration_executed,
             "stop_reason": stop_reason,
             "submission_mode": self.runtime.agent.submission_mode,
+            "final_stage": current_stage,
+            "stage_history": self.notebook.stage_history,
+            "family_stats": self.notebook.family_stats(self.toolbox.results),
+            "failed_check_histogram": self.notebook.failed_check_histogram(self.toolbox.results),
+            "hypothesis_log_tail": self.notebook.recent_hypotheses(limit=8),
         }
         report_path = self._write_run_report(
             run_id=run_id,
@@ -379,27 +504,37 @@ class AlphaResearchAgent:
             "evaluate_seed",
             "evaluate_refine",
             "evaluate_diversify",
+            "evaluate_robustness",
             "submit_best",
             "stop",
         }:
             return PlannerAction.stop(f"Invalid planner action: {action.action}")
         return action
 
-    def _execute_submit_action(self, decision: PlannerAction, iteration: int) -> Optional[Dict[str, Any]]:
+    def _execute_submit_action(
+        self,
+        decision: PlannerAction,
+        iteration: int,
+        stage: str,
+    ) -> Optional[Dict[str, Any]]:
         mode = self.runtime.agent.submission_mode
         candidate = self.toolbox.best_submittable_candidate(target_alpha_id=decision.target_alpha_id)
         if not candidate:
             self._append_event(
                 iteration=iteration,
+                stage=stage,
                 action="submit_best",
                 rationale=decision.rationale,
                 details={"result": "skipped", "reason": "No eligible submittable candidate."},
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             return None
 
         if mode == "disabled":
             self._append_event(
                 iteration=iteration,
+                stage=stage,
                 action="submit_best",
                 rationale=decision.rationale,
                 details={
@@ -407,6 +542,8 @@ class AlphaResearchAgent:
                     "reason": "Submission mode is disabled.",
                     "alpha_id": candidate.get("alpha_id"),
                 },
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             return None
 
@@ -416,6 +553,7 @@ class AlphaResearchAgent:
         if not approved:
             self._append_event(
                 iteration=iteration,
+                stage=stage,
                 action="submit_best",
                 rationale=decision.rationale,
                 details={
@@ -423,6 +561,8 @@ class AlphaResearchAgent:
                     "reason": "Manual approval not granted.",
                     "alpha_id": candidate.get("alpha_id"),
                 },
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             return None
 
@@ -436,9 +576,12 @@ class AlphaResearchAgent:
             }
             self._append_event(
                 iteration=iteration,
+                stage=stage,
                 action="submit_best",
                 rationale=decision.rationale,
                 details={"result": "ok", "alpha_id": submission.get("alpha_id")},
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             return result
         except BrainApiError as exc:
@@ -455,19 +598,61 @@ class AlphaResearchAgent:
             }
             self._append_event(
                 iteration=iteration,
+                stage=stage,
                 action="submit_best",
                 rationale=decision.rationale,
                 details={"result": "error", "alpha_id": candidate.get("alpha_id"), "message": str(exc)},
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
             )
             return error_payload
 
-    def _append_event(self, *, iteration: int, action: str, rationale: str, details: Dict[str, Any]) -> None:
+    def _select_batch(
+        self,
+        *,
+        candidates: Sequence[pipeline.Candidate],
+        batch_size: int,
+        stage: str,
+        frontier: Sequence[Dict[str, Any]],
+        blocked_families: set[str],
+        enforce_family_cap: bool = True,
+    ) -> List[pipeline.Candidate]:
+        if not candidates:
+            return []
+        ranked = self.notebook.rank_candidates(
+            candidates=candidates,
+            frontier_records=frontier,
+            stage=stage,
+            blocked_families=blocked_families,
+        )
+        if not enforce_family_cap:
+            return list(ranked[:batch_size])
+        uncapped = [candidate for candidate in ranked if not self.notebook.is_family_capped(candidate.family)]
+        if len(uncapped) >= batch_size:
+            return uncapped[:batch_size]
+        merged = uncapped + [candidate for candidate in ranked if candidate not in uncapped]
+        return merged[:batch_size]
+
+    def _append_event(
+        self,
+        *,
+        iteration: int,
+        stage: str,
+        action: str,
+        rationale: str,
+        details: Dict[str, Any],
+        hypothesis: str,
+        risk_note: str,
+    ) -> None:
         self.events.append(
             {
                 "timestamp": pipeline.iso_now(),
                 "iteration": iteration,
+                "stage": stage,
                 "action": action,
                 "rationale": rationale,
+                "hypothesis": hypothesis,
+                "risk_note": risk_note,
                 "details": details,
             }
         )
@@ -479,12 +664,15 @@ class AlphaResearchAgent:
         budget: int,
         evaluated_total: int,
         seed_target: int,
+        stage: str,
+        stage_reason: str,
         refine_candidates: Sequence[pipeline.Candidate],
         diversify_candidates: Sequence[pipeline.Candidate],
+        robustness_candidates: Sequence[pipeline.Candidate],
+        frontier: Sequence[Dict[str, Any]],
     ) -> Dict[str, Any]:
         remaining_budget = max(0, budget - evaluated_total)
-        leaderboard = self.toolbox.leaderboard(limit=5)
-        best = leaderboard[0] if leaderboard else {}
+        best = frontier[0] if frontier else {}
         best_submittable = self.toolbox.best_submittable_candidate()
         return {
             "iteration": iteration,
@@ -496,25 +684,38 @@ class AlphaResearchAgent:
             "seed_queue_remaining": len(self.toolbox.seed_queue),
             "refine_candidates_available": len(refine_candidates),
             "diversification_candidates_available": len(diversify_candidates),
-            "leaderboard_count": len(leaderboard),
+            "robustness_candidates_available": len(robustness_candidates),
+            "leaderboard_count": len(frontier),
             "best_score": best.get("score"),
             "best_alpha_id": best.get("alpha_id"),
             "best_submittable_alpha_id": best_submittable.get("alpha_id") if best_submittable else None,
             "submission_mode": self.runtime.agent.submission_mode,
             "allow_pending_checks": self.runtime.agent.allow_pending_checks,
             "family_filter": list(self.runtime.agent.family_filter),
-            "latest_failed_checks": best.get("failed_checks"),
+            "research_stage": stage,
+            "stage_reason": stage_reason,
+            "family_budget_cap": self.notebook.family_cap(),
+            "family_stats": self.notebook.family_stats(self.toolbox.results),
+            "failed_check_histogram": self.notebook.failed_check_histogram(self.toolbox.results),
+            "recent_hypotheses": self.notebook.recent_hypotheses(limit=5),
+            "recent_events": self.events[-4:],
+            "frontier_preview": [
+                {
+                    "alpha_id": item.get("alpha_id"),
+                    "family": item.get("family"),
+                    "score": item.get("score"),
+                    "failed_checks": item.get("failed_checks"),
+                    "stage": item.get("stage"),
+                }
+                for item in frontier[:5]
+            ],
         }
 
     def _best_score(self) -> Optional[float]:
         leaderboard = self.toolbox.leaderboard(limit=1)
         if not leaderboard:
             return None
-        score = leaderboard[0].get("score")
-        try:
-            return float(score)
-        except (TypeError, ValueError):
-            return None
+        return safe_float(leaderboard[0].get("score"))
 
     def _best_alpha_id(self) -> Optional[str]:
         leaderboard = self.toolbox.leaderboard(limit=1)
@@ -568,6 +769,10 @@ class AlphaResearchAgent:
                     "max_iterations": self.runtime.agent.max_iterations,
                     "seed_fraction": self.runtime.agent.seed_fraction,
                     "refine_top_k": self.runtime.agent.refine_top_k,
+                    "robustness_top_k": self.runtime.agent.robustness_top_k,
+                    "robustness_score_threshold": self.runtime.agent.robustness_score_threshold,
+                    "max_family_budget_share": self.runtime.agent.max_family_budget_share,
+                    "min_expression_novelty": self.runtime.agent.min_expression_novelty,
                     "family_filter": list(self.runtime.agent.family_filter),
                     "submission_mode": self.runtime.agent.submission_mode,
                     "allow_pending_checks": self.runtime.agent.allow_pending_checks,
@@ -577,6 +782,8 @@ class AlphaResearchAgent:
             "summary": summary,
             "leaderboard": leaderboard,
             "events": self.events,
+            "hypothesis_log": self.notebook.hypothesis_log,
+            "stage_history": self.notebook.stage_history,
             "submissions": [pipeline.compact_submission(item) for item in self.submission_attempts],
             "state": state,
         }

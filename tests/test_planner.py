@@ -14,6 +14,7 @@ class HeuristicPlannerTests(unittest.TestCase):
         planner = HeuristicPlanner()
         action = planner.decide(
             {
+                "research_stage": "explore",
                 "remaining_budget": 5,
                 "seed_queue_remaining": 10,
                 "seed_target_remaining": 4,
@@ -24,11 +25,13 @@ class HeuristicPlannerTests(unittest.TestCase):
         )
         self.assertEqual(action.action, "evaluate_seed")
         self.assertGreaterEqual(action.batch_size, 1)
+        self.assertTrue(action.hypothesis)
 
     def test_refine_when_seed_target_done(self) -> None:
         planner = HeuristicPlanner()
         action = planner.decide(
             {
+                "research_stage": "exploit",
                 "remaining_budget": 5,
                 "seed_queue_remaining": 0,
                 "seed_target_remaining": 0,
@@ -38,6 +41,34 @@ class HeuristicPlannerTests(unittest.TestCase):
             }
         )
         self.assertEqual(action.action, "evaluate_refine")
+
+    def test_robustness_stage_prefers_robustness_action(self) -> None:
+        planner = HeuristicPlanner()
+        action = planner.decide(
+            {
+                "research_stage": "robustness",
+                "remaining_budget": 6,
+                "robustness_candidates_available": 4,
+                "refine_candidates_available": 8,
+                "seed_queue_remaining": 0,
+                "seed_target_remaining": 0,
+                "iteration": 5,
+            }
+        )
+        self.assertEqual(action.action, "evaluate_robustness")
+
+    def test_harvest_auto_submit(self) -> None:
+        planner = HeuristicPlanner()
+        action = planner.decide(
+            {
+                "research_stage": "harvest",
+                "remaining_budget": 3,
+                "submission_mode": "auto_approved",
+                "best_submittable_alpha_id": "A123",
+            }
+        )
+        self.assertEqual(action.action, "submit_best")
+        self.assertEqual(action.target_alpha_id, "A123")
 
 
 class OpenAIPlannerFallbackTests(unittest.TestCase):
@@ -50,6 +81,7 @@ class OpenAIPlannerFallbackTests(unittest.TestCase):
         )
         action = planner.decide(
             {
+                "research_stage": "explore",
                 "remaining_budget": 5,
                 "seed_queue_remaining": 5,
                 "seed_target_remaining": 5,
