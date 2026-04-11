@@ -172,6 +172,63 @@
       }
     },
     {
+      "name": "repair_social_group_rank_close30_industry",
+      "family": "social_price_repair",
+      "expression": "ts_mean(-scl12_buzz, 9) + group_rank((ts_mean(close, 30) - close) / close, industry)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "repair_social_group_rank_close36_industry",
+      "family": "social_price_repair",
+      "expression": "ts_mean(-scl12_buzz, 9) + group_rank((ts_mean(close, 36) - close) / close, industry)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "repair_social_group_rank_low26_industry",
+      "family": "social_price_repair",
+      "expression": "ts_mean(-scl12_buzz, 9) + group_rank((ts_mean(low, 26) - low) / low, industry)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
       "name": "news_ratio_vol_mean5_industry",
       "family": "news_attention",
       "expression": "ts_mean(news_ratio_vol, 5)",
@@ -492,6 +549,45 @@
         {
           "name": "ts_rank",
           "expression": "ts_rank({signed_field}, {window})"
+        }
+      ]
+    },
+    {
+      "family": "social_price_repair",
+      "fields": [
+        "close",
+        "open",
+        "low"
+      ],
+      "signs": [
+        1
+      ],
+      "windows": [
+        26,
+        30,
+        34,
+        36
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "SECTOR",
+          "decay": 0,
+          "nanHandling": "OFF"
+        }
+      ],
+      "templates": [
+        {
+          "name": "group_rank_reversion",
+          "expression": "ts_mean(-scl12_buzz, 9) + group_rank((ts_mean({field}, {window}) - {field}) / {field}, industry)"
+        },
+        {
+          "name": "group_neutralized_reversion",
+          "expression": "ts_mean(-scl12_buzz, 9) + group_neutralize(rank((ts_mean({field}, {window}) - {field}) / {field}), industry)"
+        },
+        {
+          "name": "group_zscore_reversion",
+          "expression": "ts_mean(-scl12_buzz, 9) + group_zscore((ts_mean({field}, {window}) - {field}) / {field}, industry)"
         }
       ]
     },
