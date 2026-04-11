@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.log
+
+.env
+.venv/
+venv/
+
+.alpha_pipeline/
+.alpha_pipeline_v2/
+
+wqb_1578.js
+wqb_index.js
+
+.DS_Store

@@ -1,0 +1,377 @@
+{
+  "manual_seeds": [
+    {
+      "name": "social_buzz_mean5_industry",
+      "family": "social_buzz",
+      "expression": "-ts_mean(scl12_buzz, 5)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "INDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "social_buzz_decay10_industry",
+      "family": "social_buzz",
+      "expression": "ts_decay_linear(-scl12_buzz, 10)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "INDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "social_buzz_mean5_subindustry",
+      "family": "social_buzz",
+      "expression": "-ts_mean(scl12_buzz, 5)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SUBINDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "price_vwap_reversion_top1000",
+      "family": "price_reversion",
+      "expression": "rank((vwap - close) / vwap)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP1000",
+        "delay": 1,
+        "decay": 8,
+        "neutralization": "SUBINDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "ON",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "combo_social8_delta5_sector_t008",
+      "family": "social_price_combo",
+      "expression": "ts_mean(-scl12_buzz, 8) + rank(-ts_delta(close, 5))",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "combo_social8_vwap5_sector_t008",
+      "family": "social_price_combo",
+      "expression": "ts_mean(-scl12_buzz, 8) + rank((ts_mean(vwap, 5) - close) / close)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "combo_social9_close20_sector_t008",
+      "family": "social_price_combo",
+      "expression": "ts_mean(-scl12_buzz, 9) + rank((ts_mean(close, 20) - close) / close)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "combo_social9_close26_sector_t008",
+      "family": "social_price_combo",
+      "expression": "ts_mean(-scl12_buzz, 9) + rank((ts_mean(close, 26) - close) / close)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "combo_social9_close29_sector_t008",
+      "family": "social_price_combo",
+      "expression": "ts_mean(-scl12_buzz, 9) + rank((ts_mean(close, 29) - close) / close)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "OFF",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    }
+  ],
+  "families": [
+    {
+      "family": "social_buzz",
+      "fields": [
+        "scl12_buzz",
+        "scl12_buzz_fast_d1",
+        "snt_buzz",
+        "snt_buzz_fast_d1",
+        "snt_social_volume"
+      ],
+      "signs": [
+        -1
+      ],
+      "windows": [
+        3,
+        5,
+        10,
+        20
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "INDUSTRY",
+          "decay": 0,
+          "nanHandling": "OFF"
+        },
+        {
+          "universe": "TOP3000",
+          "neutralization": "SUBINDUSTRY",
+          "decay": 0,
+          "nanHandling": "OFF"
+        },
+        {
+          "universe": "TOP1000",
+          "neutralization": "INDUSTRY",
+          "decay": 4,
+          "nanHandling": "OFF"
+        }
+      ],
+      "templates": [
+        {
+          "name": "raw",
+          "expression": "{signed_field}"
+        },
+        {
+          "name": "mean",
+          "expression": "ts_mean({signed_field}, {window})"
+        },
+        {
+          "name": "decay_linear",
+          "expression": "ts_decay_linear({signed_field}, {window})"
+        },
+        {
+          "name": "liquidity_gate",
+          "expression": "trade_when(volume > adv20, ts_mean({signed_field}, {window}), -1)"
+        }
+      ]
+    },
+    {
+      "family": "social_sentiment",
+      "fields": [
+        "scl12_sentiment",
+        "scl12_sentiment_fast_d1",
+        "snt_value",
+        "snt_value_fast_d1",
+        "snt_social_value"
+      ],
+      "signs": [
+        -1,
+        1
+      ],
+      "windows": [
+        3,
+        5,
+        10,
+        20
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "INDUSTRY",
+          "decay": 0,
+          "nanHandling": "OFF"
+        },
+        {
+          "universe": "TOP3000",
+          "neutralization": "SUBINDUSTRY",
+          "decay": 0,
+          "nanHandling": "OFF"
+        }
+      ],
+      "templates": [
+        {
+          "name": "raw",
+          "expression": "{signed_field}"
+        },
+        {
+          "name": "mean",
+          "expression": "ts_mean({signed_field}, {window})"
+        },
+        {
+          "name": "decay_linear",
+          "expression": "ts_decay_linear({signed_field}, {window})"
+        }
+      ]
+    },
+    {
+      "family": "news_attention",
+      "fields": [
+        "nws18_relevance",
+        "nws18_event_relevance",
+        "nws18_nip",
+        "nws18_ssc",
+        "nws18_sse",
+        "news_ratio_vol",
+        "news_session_range_pct",
+        "news_pct_30min",
+        "news_pct_60min"
+      ],
+      "signs": [
+        -1,
+        1
+      ],
+      "windows": [
+        3,
+        5,
+        10
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "INDUSTRY",
+          "decay": 0,
+          "nanHandling": "ON"
+        },
+        {
+          "universe": "TOP1000",
+          "neutralization": "SUBINDUSTRY",
+          "decay": 4,
+          "nanHandling": "ON"
+        }
+      ],
+      "templates": [
+        {
+          "name": "raw",
+          "expression": "{signed_field}"
+        },
+        {
+          "name": "mean",
+          "expression": "ts_mean({signed_field}, {window})"
+        },
+        {
+          "name": "decay_linear",
+          "expression": "ts_decay_linear({signed_field}, {window})"
+        }
+      ]
+    },
+    {
+      "family": "price_reversion",
+      "fields": [
+        "close",
+        "vwap",
+        "returns"
+      ],
+      "signs": [
+        1
+      ],
+      "windows": [
+        5,
+        10,
+        20
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "INDUSTRY",
+          "decay": 4,
+          "nanHandling": "ON"
+        },
+        {
+          "universe": "TOP1000",
+          "neutralization": "SUBINDUSTRY",
+          "decay": 8,
+          "nanHandling": "ON"
+        }
+      ],
+      "templates": [
+        {
+          "name": "close_vs_mean",
+          "expression": "rank((ts_mean(close, {window}) - close) / close)"
+        },
+        {
+          "name": "vwap_gap",
+          "expression": "rank((ts_mean(vwap, {window}) - close) / close)"
+        },
+        {
+          "name": "return_sum",
+          "expression": "rank(ts_sum(returns, {window}))"
+        }
+      ]
+    }
+  ]
+}
