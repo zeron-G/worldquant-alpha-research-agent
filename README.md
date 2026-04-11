@@ -147,6 +147,7 @@ The pipeline is intentionally opinionated:
   - `universe`
   - `truncation`
   - template windows
+- If a family reaches the stage where basic quality checks pass but correlation checks fail, the pipeline treats that as a direction-level signal to diversify rather than endlessly over-refine the same family.
 - Auto-submit is conservative and only triggers when the candidate clears the blocking research checks already visible from the API.
 
 ## Research State Persistence
@@ -170,6 +171,8 @@ The strongest discovered candidates are no longer failing on basic quality metri
 - self-correlation is close to or below the threshold
 
 The remaining bottleneck for the strongest combo candidates is usually `PROD_CORRELATION`, not raw alpha quality. See [docs/RESULTS_SUMMARY.md](docs/RESULTS_SUMMARY.md) for the current frontier.
+
+That is also why the pipeline now pivots away from correlation-blocked families and redistributes budget into more orthogonal families such as news, sentiment, fundamentals, and structurally different price combinations.
 
 ## Extending the Idea Library
 

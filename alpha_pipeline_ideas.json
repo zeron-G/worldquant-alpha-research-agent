@@ -170,6 +170,82 @@
         "language": "FASTEXPR",
         "visualization": false
       }
+    },
+    {
+      "name": "news_ratio_vol_mean5_industry",
+      "family": "news_attention",
+      "expression": "ts_mean(news_ratio_vol, 5)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "INDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "ON",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "nws18_relevance_decay10_industry",
+      "family": "news_attention",
+      "expression": "ts_decay_linear(nws18_relevance, 10)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "INDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "ON",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "cash_to_short_debt_quality",
+      "family": "fundamental_quality",
+      "expression": "zscore(cash_st / debt_st)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP500",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SUBINDUSTRY",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "ON",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
+    },
+    {
+      "name": "operating_profit_to_long_debt",
+      "family": "fundamental_quality",
+      "expression": "rank(fnd6_fopo / debt_lt)",
+      "settings": {
+        "instrumentType": "EQUITY",
+        "region": "USA",
+        "universe": "TOP3000",
+        "delay": 1,
+        "decay": 0,
+        "neutralization": "SECTOR",
+        "truncation": 0.08,
+        "pasteurization": "ON",
+        "unitHandling": "VERIFY",
+        "nanHandling": "ON",
+        "language": "FASTEXPR",
+        "visualization": false
+      }
     }
   ],
   "families": [
@@ -370,6 +446,87 @@
         {
           "name": "return_sum",
           "expression": "rank(ts_sum(returns, {window}))"
+        }
+      ]
+    },
+    {
+      "family": "fundamental_quality",
+      "fields": [
+        "cash_st",
+        "debt_st",
+        "debt_lt",
+        "fnd6_fopo"
+      ],
+      "signs": [
+        -1,
+        1
+      ],
+      "windows": [
+        60,
+        120,
+        252
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "SECTOR",
+          "decay": 0,
+          "nanHandling": "ON"
+        },
+        {
+          "universe": "TOP500",
+          "neutralization": "SUBINDUSTRY",
+          "decay": 0,
+          "nanHandling": "ON"
+        }
+      ],
+      "templates": [
+        {
+          "name": "rank",
+          "expression": "rank({signed_field})"
+        },
+        {
+          "name": "zscore",
+          "expression": "zscore({signed_field})"
+        },
+        {
+          "name": "ts_rank",
+          "expression": "ts_rank({signed_field}, {window})"
+        }
+      ]
+    },
+    {
+      "family": "news_price_combo",
+      "fields": [
+        "news_ratio_vol",
+        "nws18_relevance",
+        "news_pct_60min"
+      ],
+      "signs": [
+        -1,
+        1
+      ],
+      "windows": [
+        5,
+        10,
+        20
+      ],
+      "settings_grid": [
+        {
+          "universe": "TOP3000",
+          "neutralization": "SECTOR",
+          "decay": 0,
+          "nanHandling": "ON"
+        }
+      ],
+      "templates": [
+        {
+          "name": "news_plus_price",
+          "expression": "ts_mean({signed_field}, {window}) + rank((ts_mean(close, 20) - close) / close)"
+        },
+        {
+          "name": "news_plus_vwap",
+          "expression": "ts_mean({signed_field}, {window}) + rank((ts_mean(vwap, 20) - close) / close)"
         }
       ]
     }

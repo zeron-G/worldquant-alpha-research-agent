@@ -101,6 +101,7 @@ The main `search` command runs in two phases.
 - take the top `--refine-top-k`
 - mutate the highest-leverage settings and windows
 - reevaluate only unseen candidates
+- if a leading family is blocked only by correlation checks, stop deepening that family and send the leftover budget into more orthogonal seeds
 
 ## Refinement Operators
 
@@ -206,6 +207,17 @@ Edit `score_result()` to match your research preferences.
 ### Change submit policy
 
 Edit the blocking check logic if you want a looser or stricter definition of "submit-ready".
+
+### Change correlation pivot behavior
+
+Edit:
+
+- `should_pivot_away_from_check_payload()`
+- `correlation_pivot_families()`
+- `prioritize_seed_candidates()`
+- `build_diversification_candidates()`
+
+if you want a more or less aggressive strategy for switching directions after self/prod correlation failures.
 
 ## Current Limitation
 

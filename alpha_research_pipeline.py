@@ -39,6 +39,10 @@ BLOCKING_CHECKS = {
     "CONCENTRATED_WEIGHT",
     "LOW_SUB_UNIVERSE_SHARPE",
 }
+CORRELATION_CHECKS = {
+    "SELF_CORRELATION",
+    "PROD_CORRELATION",
+}
 
 
 @dataclass(frozen=True)
@@ -190,6 +194,7 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
         if record_signature(record)
     }
     submitted_alpha_ids = {record.get("alpha_id") for record in prior_submissions if record.get("alpha_id")}
+    prior_pivot_families = correlation_pivot_families(prior_results)
 
     library = load_json(Path(args.idea_library))
     available_fields = load_available_fields(args.fields_summary)
@@ -198,12 +203,12 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
         family_filter=set(args.family or []),
         available_fields=available_fields,
     )
-    manual = [candidate for candidate in seeds if candidate.stage == "manual_seed"]
-    generated = [candidate for candidate in seeds if candidate.stage != "manual_seed"]
-    if args.shuffle_seeds:
-        rng = random.Random(args.random_seed)
-        rng.shuffle(generated)
-    ordered_seed_candidates = manual + generated
+    ordered_seed_candidates = prioritize_seed_candidates(
+        seeds=seeds,
+        blocked_families=prior_pivot_families,
+        shuffle_generated=args.shuffle_seeds,
+        random_seed=args.random_seed,
+    )
     fresh_seed_candidates = [
         candidate for candidate in ordered_seed_candidates if candidate.signature() not in evaluated_signatures
     ]
@@ -240,11 +245,13 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
             budget=budget,
             seed_budget=seed_budget,
             refine_budget=0,
+            diversify_budget=0,
             evaluated_now=evaluated_now,
             submission_attempts=submission_attempts,
             leaderboard=leaderboard,
             workdir=workdir,
             state=state,
+            pivot_families=sorted(prior_pivot_families),
         )
 
     all_results = results_store.read_all()
@@ -253,21 +260,33 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
         family_filter=set(args.family or []),
         limit=max(args.refine_top_k, 10),
     )
+    pivot_families = correlation_pivot_families(leaderboard_before_refine[: args.refine_top_k])
     remaining_budget = max(0, budget - len(evaluated_now))
     refine_candidates = build_refinement_candidates(
         leaderboard_before_refine[: args.refine_top_k],
         family_filter=set(args.family or []),
+        blocked_families=pivot_families,
     )
+    current_signatures = {
+        record_signature(record)
+        for record in all_results
+        if record_signature(record)
+    }
     fresh_refine_candidates = [
         candidate
         for candidate in refine_candidates
-        if candidate.signature() not in {
-            record_signature(record)
-            for record in all_results
-            if record_signature(record)
-        }
+        if candidate.signature() not in current_signatures
     ]
     refine_slice = fresh_refine_candidates[:remaining_budget]
+    diversification_slice: List[Candidate] = []
+    remaining_after_refine = max(0, remaining_budget - len(refine_slice))
+    if remaining_after_refine:
+        diversification_candidates = build_diversification_candidates(
+            seeds=ordered_seed_candidates,
+            excluded_signatures=current_signatures,
+            blocked_families=pivot_families,
+        )
+        diversification_slice = diversification_candidates[:remaining_after_refine]
     evaluated_now.extend(
         evaluate_batch(
             client=client,
@@ -285,6 +304,24 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
             submission_attempts=submission_attempts,
         )
     )
+    if diversification_slice:
+        evaluated_now.extend(
+            evaluate_batch(
+                client=client,
+                candidates=diversification_slice,
+                results_store=results_store,
+                submissions_store=submissions_store,
+                submitted_alpha_ids=submitted_alpha_ids,
+                max_wait=args.max_wait,
+                poll_interval=args.poll_interval,
+                retries=args.retries,
+                sleep_between=args.sleep_between,
+                should_attempt_submit=args.attempt_submit,
+                allow_pending_checks=args.allow_pending_checks,
+                stop_on_submittable=args.stop_on_submittable,
+                submission_attempts=submission_attempts,
+            )
+        )
 
     all_results = results_store.read_all()
     all_submissions = submissions_store.read_all()
@@ -294,11 +331,13 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
         budget=budget,
         seed_budget=seed_budget,
         refine_budget=len(refine_slice),
+        diversify_budget=len(diversification_slice),
         evaluated_now=evaluated_now,
         submission_attempts=submission_attempts,
         leaderboard=leaderboard,
         workdir=workdir,
         state=state,
+        pivot_families=sorted(pivot_families),
     )
 
 
@@ -508,6 +547,73 @@ def generate_seed_candidates(
     return candidates
 
 
+def prioritize_seed_candidates(
+    *,
+    seeds: Sequence[Candidate],
+    blocked_families: set[str],
+    shuffle_generated: bool,
+    random_seed: int,
+) -> List[Candidate]:
+    manual_nonblocked = [item for item in seeds if item.stage == "manual_seed" and item.family not in blocked_families]
+    manual_blocked = [item for item in seeds if item.stage == "manual_seed" and item.family in blocked_families]
+    generated_nonblocked = [item for item in seeds if item.stage != "manual_seed" and item.family not in blocked_families]
+    generated_blocked = [item for item in seeds if item.stage != "manual_seed" and item.family in blocked_families]
+
+    if shuffle_generated:
+        rng = random.Random(random_seed)
+        rng.shuffle(generated_nonblocked)
+        rng.shuffle(generated_blocked)
+
+    return (
+        manual_nonblocked
+        + interleave_candidates_by_family(generated_nonblocked)
+        + manual_blocked
+        + interleave_candidates_by_family(generated_blocked)
+    )
+
+
+def interleave_candidates_by_family(candidates: Sequence[Candidate]) -> List[Candidate]:
+    grouped: Dict[str, List[Candidate]] = {}
+    order: List[str] = []
+    for candidate in candidates:
+        if candidate.family not in grouped:
+            grouped[candidate.family] = []
+            order.append(candidate.family)
+        grouped[candidate.family].append(candidate)
+
+    interleaved: List[Candidate] = []
+    while True:
+        made_progress = False
+        for family in order:
+            bucket = grouped[family]
+            if not bucket:
+                continue
+            interleaved.append(bucket.pop(0))
+            made_progress = True
+        if not made_progress:
+            break
+    return interleaved
+
+
+def build_diversification_candidates(
+    *,
+    seeds: Sequence[Candidate],
+    excluded_signatures: set[str],
+    blocked_families: set[str],
+) -> List[Candidate]:
+    preferred = [
+        candidate
+        for candidate in seeds
+        if candidate.signature() not in excluded_signatures and candidate.family not in blocked_families
+    ]
+    fallback = [
+        candidate
+        for candidate in seeds
+        if candidate.signature() not in excluded_signatures and candidate.family in blocked_families
+    ]
+    return interleave_candidates_by_family(preferred) + interleave_candidates_by_family(fallback)
+
+
 def evaluate_batch(
     *,
     client: BrainClient,
@@ -586,6 +692,8 @@ def evaluate_candidate(
             summary = summarize_checks(check_payload)
             metrics = extract_metrics(detail, check_payload)
             blocking = failed_blocking_checks(check_payload)
+            failed_all = failed_checks(check_payload)
+            failed_corr = failed_correlation_checks(check_payload)
             record = {
                 **candidate.to_record(),
                 "status": "ok",
@@ -596,7 +704,10 @@ def evaluate_candidate(
                 "alpha_status": detail.get("status"),
                 "metrics": metrics,
                 "summary": summary,
+                "failed_checks": failed_all,
                 "failed_blocking_checks": blocking,
+                "failed_correlation_checks": failed_corr,
+                "correlation_pivot": should_pivot_away_from_check_payload(check_payload),
                 "precheck_submit_ready": not blocking,
                 "score": score_result(detail, check_payload),
                 "detail": {
@@ -665,12 +776,50 @@ def extract_checks(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def failed_blocking_checks(check_payload: Any) -> List[str]:
+def failed_checks(check_payload: Any, names: Optional[set[str]] = None) -> List[str]:
     failed: List[str] = []
     for check in extract_checks(check_payload):
-        if check.get("result") == "FAIL" and check.get("name") in BLOCKING_CHECKS:
-            failed.append(str(check["name"]))
+        if check.get("result") != "FAIL":
+            continue
+        name = str(check.get("name") or "")
+        if names is not None and name not in names:
+            continue
+        failed.append(name)
     return failed
+
+
+def failed_blocking_checks(check_payload: Any) -> List[str]:
+    return failed_checks(check_payload, BLOCKING_CHECKS)
+
+
+def failed_correlation_checks(check_payload: Any) -> List[str]:
+    return failed_checks(check_payload, CORRELATION_CHECKS)
+
+
+def should_pivot_away_from_check_payload(check_payload: Any) -> bool:
+    return not failed_blocking_checks(check_payload) and bool(failed_correlation_checks(check_payload))
+
+
+def should_pivot_away_from_record(record: Dict[str, Any]) -> bool:
+    if record.get("status") != "ok":
+        return False
+    if bool(record.get("correlation_pivot")):
+        return True
+    failed_blocking = record.get("failed_blocking_checks") or []
+    failed_corr = record.get("failed_correlation_checks") or []
+    if not failed_corr:
+        failed_summary = record.get("summary", {}).get("failed") or []
+        failed_corr = [name for name in failed_summary if name in CORRELATION_CHECKS]
+    return not failed_blocking and bool(failed_corr)
+
+
+def correlation_pivot_families(records: Iterable[Dict[str, Any]]) -> set[str]:
+    pivot_families: set[str] = set()
+    for record in records:
+        family = record.get("family")
+        if isinstance(family, str) and family and should_pivot_away_from_record(record):
+            pivot_families.add(family)
+    return pivot_families
 
 
 def score_result(detail: Dict[str, Any], check_payload: Any) -> float:
@@ -719,9 +868,11 @@ def build_refinement_candidates(
     top_records: Sequence[Dict[str, Any]],
     *,
     family_filter: set[str],
+    blocked_families: Optional[set[str]] = None,
 ) -> List[Candidate]:
     seen: set[str] = set()
     refinements: List[Candidate] = []
+    blocked_families = blocked_families or set()
     window_offsets = (-2, -1, 1, 2, 5)
     decay_choices = (0, 2, 4, 6, 8)
     neutralizations = ("SECTOR", "INDUSTRY", "SUBINDUSTRY")
@@ -733,6 +884,8 @@ def build_refinement_candidates(
         if family_filter and family not in family_filter:
             continue
         if record.get("status") != "ok":
+            continue
+        if family in blocked_families:
             continue
         base_settings = normalize_settings(record.get("settings") or {})
         expression = str(record.get("expression") or "")
@@ -876,20 +1029,24 @@ def build_search_summary(
     budget: int,
     seed_budget: int,
     refine_budget: int,
+    diversify_budget: int,
     evaluated_now: Sequence[Dict[str, Any]],
     submission_attempts: Sequence[Dict[str, Any]],
     leaderboard: Sequence[Dict[str, Any]],
     workdir: Path,
     state: Dict[str, Any],
+    pivot_families: Sequence[str],
 ) -> Dict[str, Any]:
     return {
         "budget": budget,
         "seed_budget": seed_budget,
         "refine_budget": refine_budget,
+        "diversify_budget": diversify_budget,
         "evaluated_now": len(evaluated_now),
         "ok_now": sum(1 for item in evaluated_now if item.get("status") == "ok"),
         "error_now": sum(1 for item in evaluated_now if item.get("status") == "error"),
         "submittable_now": sum(1 for item in evaluated_now if item.get("precheck_submit_ready")),
+        "correlation_pivot_families": list(pivot_families),
         "submission_attempts": [compact_submission(item) for item in submission_attempts],
         "best_current": compact_record(leaderboard[0]) if leaderboard else None,
         "leaderboard": [compact_record(item) for item in leaderboard[:5]],
@@ -914,7 +1071,10 @@ def compact_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "settings": record.get("settings"),
         "score": record.get("score"),
         "metrics": record.get("metrics"),
+        "failed_checks": record.get("failed_checks"),
         "failed_blocking_checks": record.get("failed_blocking_checks"),
+        "failed_correlation_checks": record.get("failed_correlation_checks"),
+        "correlation_pivot": record.get("correlation_pivot"),
         "precheck_submit_ready": record.get("precheck_submit_ready"),
         "summary": record.get("summary"),
     }
