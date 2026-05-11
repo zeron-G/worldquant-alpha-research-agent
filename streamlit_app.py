@@ -23,6 +23,10 @@ DEFAULT_DEMO_RUN_ID = "presentation_demo_2026"
 DEFAULT_PLANNER_MODEL = "gpt5.5"
 REPOSITORY_URL = "https://github.com/zeron-G/worldquant-alpha-research-agent"
 PERSONAL_URL = "https://rongzegao.com"
+IDEA_LIBRARY_PRESETS = {
+    "Core search library": "alpha_pipeline_ideas.json",
+    "Alpha101 replication": "alpha101_ideas.json",
+}
 
 load_local_dotenv()
 
@@ -1607,7 +1611,30 @@ def sidebar_controls() -> tuple[AgentRuntimeConfig, bool, Dict[str, Any]]:
         planner_timeout = st.number_input("Planner timeout seconds", min_value=5.0, max_value=240.0, value=env_float("ALPHA_AGENT_PLANNER_TIMEOUT", 60.0), step=5.0)
 
         st.markdown("### Search Space")
-        idea_library = Path(st.text_input("Idea library", value=env_str("ALPHA_AGENT_IDEA_LIBRARY", "alpha_pipeline_ideas.json")))
+        idea_library_env = env_str("ALPHA_AGENT_IDEA_LIBRARY", "alpha_pipeline_ideas.json")
+        preset_options = list(IDEA_LIBRARY_PRESETS) + ["Custom path"]
+        preset_index = next(
+            (
+                index
+                for index, label in enumerate(preset_options)
+                if IDEA_LIBRARY_PRESETS.get(label) == idea_library_env
+                or Path(IDEA_LIBRARY_PRESETS.get(label, "")).name == Path(idea_library_env).name
+            ),
+            len(preset_options) - 1,
+        )
+        idea_library_preset = st.selectbox("Idea library preset", options=preset_options, index=preset_index)
+        idea_library_default = (
+            idea_library_env
+            if idea_library_preset == "Custom path"
+            else IDEA_LIBRARY_PRESETS[idea_library_preset]
+        )
+        idea_library = Path(
+            st.text_input(
+                "Idea library",
+                value=idea_library_default,
+                key=f"idea_library_path_{idea_library_preset.replace(' ', '_').lower()}",
+            )
+        )
         fields_summary = Path(st.text_input("Fields summary", value=env_str("ALPHA_AGENT_FIELDS_SUMMARY", "wqb_data_fields_summary.json")))
         families = available_families(idea_library)
         family_filter = tuple(st.multiselect("Family filter", options=families, default=[]))

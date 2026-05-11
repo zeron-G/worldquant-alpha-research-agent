@@ -62,6 +62,11 @@ The signature is used for deduplication so that semantically identical candidate
 
 The JSON idea library has two sections.
 
+### `default_settings`
+
+Optional top-level settings applied to every manual seed unless that seed overrides them.
+This is useful for large curated libraries such as `alpha101_ideas.json`, where all seeds should share the same region, universe, delay, decay, neutralization, truncation, and language settings.
+
 ### `manual_seeds`
 
 Used for:

@@ -20,6 +20,8 @@ Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https:/
   Baseline heuristic search pipeline (seed + refine + score + optional submit).
 - `alpha_research_agent.py`  
   New planner-driven agent CLI entrypoint.
+- `alpha101_ideas.json`  
+  WorldQuant BRAIN-compatible transliteration of all 101 formulaic alpha seeds for broad replication/search runs.
 - `alpha_agent/`  
   Agent runtime modules:
   - `config.py`: shared runtime dataclasses
@@ -154,6 +156,12 @@ Focus on a family:
 python .\alpha_research_agent.py --pretty run --family social_buzz --budget 12
 ```
 
+Start from the Alpha101 replication library:
+
+```powershell
+python .\alpha_research_agent.py --pretty --idea-library .\alpha101_ideas.json run --family alpha101 --budget 24 --max-iterations 8
+```
+
 Use OpenAI planner:
 
 ```powershell
@@ -206,6 +214,7 @@ Recommended presentation flow:
 The presentation console provides:
 
 - built-in showcase case for fast, reliable presentation
+- idea library presets for the core search library and the Alpha101 replication library
 - full live controls for auth, LLM planner, budget, family filters, novelty, robustness, retries, polling, workdir, and submission governance
 - visual analytics for best score, quality-ready count, correlation-blocked candidates, submit-ready candidates, stage transitions, failure pressure, and family frontier
 - candidate inspector with expression, settings, metrics, and check summary
@@ -218,11 +227,12 @@ You can also load a saved run report from the sidebar with either:
 - `Run report JSON path`
 
 More presentation notes are in [`docs/PRESENTATION_FRONTEND.md`](docs/PRESENTATION_FRONTEND.md).
+Alpha101 replication notes are in [`docs/ALPHA101.md`](docs/ALPHA101.md).
 
 ## Basic Tests
 
 ```powershell
-python -m unittest tests\test_planner.py tests\test_research_logic.py
+python -m unittest tests\test_planner.py tests\test_research_logic.py tests\test_progress.py tests\test_alpha101_library.py
 ```
 
 ## Reproducibility Artifacts

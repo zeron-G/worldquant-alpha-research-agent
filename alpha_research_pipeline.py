@@ -480,6 +480,9 @@ def generate_seed_candidates(
 ) -> List[Candidate]:
     seen: set[str] = set()
     candidates: List[Candidate] = []
+    manual_default_settings = library.get("default_settings") or {}
+    if not isinstance(manual_default_settings, dict):
+        manual_default_settings = {}
 
     for item in library.get("manual_seeds", []):
         if not isinstance(item, dict):
@@ -487,14 +490,19 @@ def generate_seed_candidates(
         family = str(item.get("family") or "manual")
         if family_filter and family not in family_filter:
             continue
+        settings = copy.deepcopy(manual_default_settings)
+        settings.update(copy.deepcopy(item.get("settings") or {}))
+        metadata = {"manual": True}
+        if isinstance(item.get("metadata"), dict):
+            metadata.update(copy.deepcopy(item["metadata"]))
         candidate = Candidate(
             expression=str(item["expression"]),
-            settings=normalize_settings(item.get("settings") or {}),
+            settings=normalize_settings(settings),
             family=family,
             idea_name=str(item.get("name") or family),
             stage="manual_seed",
             priority=1000.0,
-            metadata={"manual": True},
+            metadata=metadata,
         )
         if candidate.signature() not in seen:
             seen.add(candidate.signature())
