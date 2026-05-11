@@ -23,6 +23,7 @@ from worldquant_brain_cli import BrainApiError, BrainClient
 
 
 ApprovalCallback = Callable[[Dict[str, Any]], bool]
+ProgressCallback = Callable[[Dict[str, Any]], None]
 
 
 @dataclass
@@ -199,10 +200,26 @@ class ResearchToolbox:
             if candidate.signature() not in self.evaluated_signatures
         ]
 
-    def evaluate_candidates(self, candidates: Sequence[pipeline.Candidate]) -> List[Dict[str, Any]]:
+    def evaluate_candidates(
+        self,
+        candidates: Sequence[pipeline.Candidate],
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> List[Dict[str, Any]]:
         if not candidates:
             return []
         submission_attempts: List[Dict[str, Any]] = []
+
+        def emit_progress(payload: Dict[str, Any]) -> None:
+            if payload.get("type") == "candidate_completed":
+                self.refresh_records()
+                payload["leaderboard"] = [
+                    pipeline.compact_record(item)
+                    for item in self.leaderboard(limit=8)
+                ]
+                payload["state"] = self.write_state()
+            if progress_callback:
+                progress_callback(payload)
+
         evaluated = pipeline.evaluate_batch(
             client=self.client,
             candidates=candidates,
@@ -217,6 +234,7 @@ class ResearchToolbox:
             allow_pending_checks=self.agent_cfg.allow_pending_checks,
             stop_on_submittable=False,
             submission_attempts=submission_attempts,
+            progress_callback=emit_progress,
         )
         self.refresh_records()
         return evaluated
@@ -264,11 +282,13 @@ class AlphaResearchAgent:
         runtime: AgentRuntimeConfig,
         planner: Optional[Any] = None,
         approval_callback: Optional[ApprovalCallback] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> None:
         self.runtime = runtime
         self.planner = planner or HeuristicPlanner()
         self.toolbox = ResearchToolbox(runtime)
         self.approval_callback = approval_callback
+        self.progress_callback = progress_callback
         self.events: List[Dict[str, Any]] = []
         self.submission_attempts: List[Dict[str, Any]] = []
         self.seed_evaluated_count = 0
@@ -293,6 +313,16 @@ class AlphaResearchAgent:
         stop_reason = "Completed."
         iteration_executed = 0
         current_stage = "explore"
+        self._emit_progress(
+            {
+                "type": "run_started",
+                "run_id": run_id,
+                "started_at": started_at,
+                "budget": budget,
+                "max_iterations": self.runtime.agent.max_iterations,
+                "workdir": str(self.runtime.agent.workdir),
+            }
+        )
 
         for iteration in range(1, self.runtime.agent.max_iterations + 1):
             iteration_executed = iteration
@@ -356,6 +386,23 @@ class AlphaResearchAgent:
                 rationale=decision.rationale,
                 focus_family=decision.focus_family,
                 risk_note=decision.risk_note,
+            )
+            self._emit_progress(
+                {
+                    "type": "planner_decision",
+                    "run_id": run_id,
+                    "iteration": iteration,
+                    "stage": current_stage,
+                    "stage_reason": stage_reason,
+                    "decision": decision.raw or {},
+                    "action": decision.action,
+                    "batch_size": decision.batch_size,
+                    "rationale": decision.rationale,
+                    "hypothesis": decision.hypothesis,
+                    "risk_note": decision.risk_note,
+                    "context": context,
+                    "leaderboard": [pipeline.compact_record(item) for item in frontier[:8]],
+                }
             )
 
             if decision.action == "stop":
@@ -427,7 +474,32 @@ class AlphaResearchAgent:
                 )
                 continue
 
-            records = self.toolbox.evaluate_candidates(batch)
+            self._emit_progress(
+                {
+                    "type": "batch_started",
+                    "run_id": run_id,
+                    "iteration": iteration,
+                    "stage": current_stage,
+                    "action": decision.action,
+                    "batch_size": len(batch),
+                    "candidates": [candidate.to_record() for candidate in batch],
+                    "remaining_budget": remaining_budget,
+                }
+            )
+
+            records = self.toolbox.evaluate_candidates(
+                batch,
+                progress_callback=lambda payload, iteration=iteration, stage=current_stage, action=decision.action: self._emit_progress(
+                    {
+                        **payload,
+                        "run_id": run_id,
+                        "iteration": iteration,
+                        "stage": stage,
+                        "action": action,
+                        "budget": budget,
+                    }
+                ),
+            )
             self.notebook.observe_records(records)
             evaluated_total += len(records)
             evaluated_this_run += len(records)
@@ -461,6 +533,21 @@ class AlphaResearchAgent:
                 risk_note=decision.risk_note,
             )
             self.toolbox.write_state()
+            self._emit_progress(
+                {
+                    "type": "batch_completed",
+                    "run_id": run_id,
+                    "iteration": iteration,
+                    "stage": current_stage,
+                    "action": decision.action,
+                    "details": event_details,
+                    "leaderboard": [
+                        pipeline.compact_record(item)
+                        for item in self.toolbox.leaderboard(limit=8)
+                    ],
+                    "state": self.toolbox.write_state(),
+                }
+            )
 
         finished_at = pipeline.iso_now()
         leaderboard = [pipeline.compact_record(item) for item in self.toolbox.leaderboard(limit=10)]
@@ -502,7 +589,7 @@ class AlphaResearchAgent:
             leaderboard=leaderboard,
             state=state,
         )
-        return AgentRunResult(
+        result = AgentRunResult(
             run_id=run_id,
             started_at=started_at,
             finished_at=finished_at,
@@ -513,6 +600,8 @@ class AlphaResearchAgent:
             submissions=self.submission_attempts,
             state=state,
         )
+        self._emit_progress({"type": "run_finished", "run_id": run_id, "result": result.to_dict()})
+        return result
 
     def _decide(self, context: Dict[str, Any]) -> PlannerAction:
         action = self.planner.decide(context)
@@ -675,8 +764,7 @@ class AlphaResearchAgent:
         hypothesis: str,
         risk_note: str,
     ) -> None:
-        self.events.append(
-            {
+        event = {
                 "timestamp": pipeline.iso_now(),
                 "iteration": iteration,
                 "stage": stage,
@@ -685,8 +773,19 @@ class AlphaResearchAgent:
                 "hypothesis": hypothesis,
                 "risk_note": risk_note,
                 "details": details,
-            }
-        )
+        }
+        self.events.append(event)
+        self._emit_progress({"type": "event_appended", "event": event})
+
+    def _emit_progress(self, payload: Dict[str, Any]) -> None:
+        if not self.progress_callback:
+            return
+        payload.setdefault("timestamp", pipeline.iso_now())
+        try:
+            self.progress_callback(payload)
+        except Exception:
+            # Progress rendering must not interrupt a live research run.
+            pass
 
     def _build_context(
         self,

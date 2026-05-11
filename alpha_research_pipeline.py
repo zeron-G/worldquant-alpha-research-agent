@@ -12,7 +12,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence
 
 from worldquant_brain_cli import (
     API_BASE,
@@ -645,11 +645,21 @@ def evaluate_batch(
     allow_pending_checks: bool,
     stop_on_submittable: bool,
     submission_attempts: List[Dict[str, Any]],
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> List[Dict[str, Any]]:
     evaluated: List[Dict[str, Any]] = []
     for index, candidate in enumerate(candidates):
         if index > 0 and sleep_between > 0:
             time.sleep(sleep_between)
+        emit_progress(
+            progress_callback,
+            {
+                "type": "candidate_started",
+                "candidate_index": index + 1,
+                "candidate_count": len(candidates),
+                "candidate": candidate.to_record(),
+            },
+        )
         record = evaluate_candidate(
             client=client,
             candidate=candidate,
@@ -659,6 +669,15 @@ def evaluate_batch(
         )
         results_store.append(record)
         evaluated.append(record)
+        emit_progress(
+            progress_callback,
+            {
+                "type": "candidate_completed",
+                "candidate_index": index + 1,
+                "candidate_count": len(candidates),
+                "record": compact_record(record) if record.get("status") == "ok" else record,
+            },
+        )
         alpha_id = record.get("alpha_id")
         ready = record_is_submit_ready(record, allow_pending_checks=allow_pending_checks)
         no_pending = not record_pending_checks(record)
@@ -681,6 +700,15 @@ def evaluate_batch(
         if stop_on_submittable and ready:
             break
     return evaluated
+
+
+def emit_progress(
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]],
+    payload: Dict[str, Any],
+) -> None:
+    if not progress_callback:
+        return
+    progress_callback(payload)
 
 
 def evaluate_candidate(

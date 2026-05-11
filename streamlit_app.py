@@ -7,7 +7,7 @@ import math
 import os
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 import streamlit as st
 
@@ -574,7 +574,11 @@ def build_planner(model_cfg: ModelConfig):
     return HeuristicPlanner()
 
 
-def run_agent(runtime: AgentRuntimeConfig, approve_manual_submits: bool) -> Dict[str, Any]:
+def run_agent(
+    runtime: AgentRuntimeConfig,
+    approve_manual_submits: bool,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     planner = build_planner(runtime.model)
 
     def approval_callback(_candidate: Dict[str, Any]) -> bool:
@@ -584,6 +588,7 @@ def run_agent(runtime: AgentRuntimeConfig, approve_manual_submits: bool) -> Dict
         runtime=runtime,
         planner=planner,
         approval_callback=approval_callback,
+        progress_callback=progress_callback,
     )
     return agent.run().to_dict()
 
@@ -1192,9 +1197,9 @@ def build_performance_series(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-def render_performance_chart(candidate: Dict[str, Any]) -> None:
+def render_performance_chart(candidate: Dict[str, Any], *, key_prefix: str = "chart_metric") -> None:
     alpha_id = candidate.get("alpha_id") or candidate.get("candidate_key") or "candidate"
-    key = f"chart_metric_{stable_seed(alpha_id)}"
+    key = f"{key_prefix}_{stable_seed(alpha_id)}"
     st.markdown(
         '<div class="chart-shell"><div class="chart-head">Candidate Performance Chart'
         '<span>PnL, Sharpe, and Turnover derived from candidate metrics</span></div></div>',
@@ -1202,6 +1207,180 @@ def render_performance_chart(candidate: Dict[str, Any]) -> None:
     )
     metric = st.selectbox("Chart metric", options=["PnL", "Sharpe", "Turnover"], index=0, key=key)
     st.line_chart(build_performance_series(candidate), x="date", y=metric, height=320)
+
+
+def render_performance_line(candidate: Dict[str, Any], metric: str = "PnL") -> None:
+    st.markdown(
+        '<div class="chart-shell"><div class="chart-head">Latest Performance'
+        f'<span>{escape(metric)}</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    st.line_chart(build_performance_series(candidate), x="date", y=metric, height=260)
+
+
+def create_live_state(runtime: AgentRuntimeConfig) -> Dict[str, Any]:
+    return {
+        "status": "Starting",
+        "summary": {
+            "budget": runtime.agent.budget,
+            "evaluated_this_run": 0,
+            "quality_ready_count": 0,
+            "correlation_blocked_count": 0,
+            "submittable_count": 0,
+            "submission_attempts_this_run": 0,
+            "submission_mode": runtime.agent.submission_mode,
+            "final_stage": "starting",
+            "best_score": None,
+            "best_alpha_id": None,
+            "iterations_executed": 0,
+        },
+        "events": [],
+        "leaderboard": [],
+        "latest_candidate": None,
+        "latest_record": None,
+        "latest_message": "Waiting for the first planner decision.",
+        "completed_this_run": 0,
+    }
+
+
+def apply_progress_event(live_state: Dict[str, Any], event: Dict[str, Any]) -> None:
+    event_type = str(event.get("type") or "")
+    summary = live_state.setdefault("summary", {})
+    if event_type == "run_started":
+        live_state["status"] = "Running"
+        live_state["latest_message"] = f"Run {event.get('run_id')} started."
+        summary["run_id"] = event.get("run_id")
+        summary["budget"] = event.get("budget")
+        summary["final_stage"] = "starting"
+    elif event_type == "planner_decision":
+        live_state["status"] = f"Iteration {event.get('iteration')} planning"
+        live_state["latest_message"] = event.get("rationale") or "Planner selected the next action."
+        summary["iterations_executed"] = event.get("iteration")
+        summary["final_stage"] = event.get("stage")
+        if event.get("leaderboard"):
+            live_state["leaderboard"] = event.get("leaderboard")
+    elif event_type == "batch_started":
+        live_state["status"] = f"Iteration {event.get('iteration')} running {event.get('action')}"
+        candidates = event.get("candidates") or []
+        live_state["latest_candidate"] = candidates[0] if candidates else None
+        live_state["latest_message"] = f"Evaluating {len(candidates)} candidate(s)."
+        summary["final_stage"] = event.get("stage")
+    elif event_type == "candidate_started":
+        live_state["latest_candidate"] = event.get("candidate")
+        live_state["latest_message"] = (
+            f"Candidate {event.get('candidate_index')} of {event.get('candidate_count')} is running."
+        )
+    elif event_type == "candidate_completed":
+        live_state["latest_record"] = event.get("record")
+        live_state["completed_this_run"] = int(live_state.get("completed_this_run") or 0) + 1
+        live_state["latest_message"] = (
+            f"Candidate {event.get('candidate_index')} of {event.get('candidate_count')} completed."
+        )
+        if event.get("leaderboard"):
+            live_state["leaderboard"] = event.get("leaderboard")
+        state = event.get("state") or {}
+        summary["evaluated_this_run"] = live_state["completed_this_run"]
+        summary["quality_ready_count"] = state.get("quality_ready_count", summary.get("quality_ready_count", 0))
+        summary["correlation_blocked_count"] = state.get(
+            "correlation_blocked_count",
+            summary.get("correlation_blocked_count", 0),
+        )
+        summary["submittable_count"] = state.get("submittable_count", summary.get("submittable_count", 0))
+        summary["best_score"] = state.get("best_score", summary.get("best_score"))
+        summary["best_alpha_id"] = state.get("best_alpha_id", summary.get("best_alpha_id"))
+    elif event_type == "event_appended":
+        appended = event.get("event")
+        if isinstance(appended, dict):
+            live_state.setdefault("events", []).append(appended)
+            live_state["events"] = live_state["events"][-8:]
+    elif event_type == "batch_completed":
+        details = event.get("details") or {}
+        live_state["latest_message"] = (
+            f"Batch completed: {fmt(details.get('ok_count'))} ok, {fmt(details.get('error_count'))} errors."
+        )
+        if event.get("leaderboard"):
+            live_state["leaderboard"] = event.get("leaderboard")
+        state = event.get("state") or {}
+        summary["best_score"] = state.get("best_score", summary.get("best_score"))
+        summary["best_alpha_id"] = state.get("best_alpha_id", summary.get("best_alpha_id"))
+    elif event_type == "run_finished":
+        result = event.get("result") or {}
+        live_state["status"] = "Completed"
+        live_state["latest_message"] = "Live run completed."
+        live_state["summary"] = result.get("summary") or summary
+        live_state["leaderboard"] = result.get("leaderboard") or live_state.get("leaderboard", [])
+        live_state["events"] = result.get("events") or live_state.get("events", [])
+
+
+def render_live_progress(live_state: Dict[str, Any], slots: Dict[str, Any]) -> None:
+    summary = live_state.get("summary") or {}
+    budget = max(1, int(summary.get("budget") or 1))
+    evaluated = int(summary.get("evaluated_this_run") or 0)
+    ratio = min(1.0, evaluated / budget)
+
+    with slots["overview"].container():
+        st.markdown('<div class="section">', unsafe_allow_html=True)
+        section_header("Live Search Progress", str(live_state.get("status") or "Running"))
+        st.progress(ratio, text=f"{evaluated} / {budget} evaluations used")
+        metric_grid(
+            [
+                {"label": "Stage", "value": summary.get("final_stage") or "-", "sub": live_state.get("latest_message")},
+                {"label": "Best Score", "value": fmt(summary.get("best_score")), "sub": summary.get("best_alpha_id") or "-"},
+                {"label": "Quality Ready", "value": fmt(summary.get("quality_ready_count")), "sub": "core checks passed", "status": "good"},
+                {"label": "Corr Blocked", "value": fmt(summary.get("correlation_blocked_count")), "sub": "repair targets", "status": "warn"},
+                {"label": "Submit-Ready", "value": fmt(summary.get("submittable_count")), "sub": "all blocking checks clear", "status": "good" if summary.get("submittable_count") else "warn"},
+            ]
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    latest_record = live_state.get("latest_record")
+    latest_candidate = live_state.get("latest_candidate")
+    with slots["latest"].container():
+        st.markdown('<div class="section">', unsafe_allow_html=True)
+        section_header("Latest Attempt", "candidate currently running or most recently completed")
+        current = latest_record or latest_candidate
+        if current:
+            st.code(current.get("expression") or "", language="text")
+            cols = st.columns([0.9, 1.1])
+            with cols[0]:
+                st.json(
+                    {
+                        "alpha_id": current.get("alpha_id"),
+                        "family": current.get("family"),
+                        "idea_name": current.get("idea_name"),
+                        "stage": current.get("stage"),
+                        "score": current.get("score"),
+                        "failed_checks": current.get("failed_checks"),
+                    },
+                    expanded=False,
+                )
+            with cols[1]:
+                if latest_record and latest_record.get("status") == "ok":
+                    render_performance_line(latest_record)
+        else:
+            st.info("No candidate has started yet.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with slots["tables"].container():
+        left, right = st.columns([1, 1])
+        with left:
+            st.markdown('<div class="section">', unsafe_allow_html=True)
+            section_header("Live Leaderboard", "updated after each completed candidate")
+            render_leaderboard(live_state.get("leaderboard") or [])
+            st.markdown("</div>", unsafe_allow_html=True)
+        with right:
+            st.markdown('<div class="section">', unsafe_allow_html=True)
+            section_header("Live Trace", "planner and batch events")
+            render_action_timeline(live_state.get("events") or [])
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+def make_live_slots() -> Dict[str, Any]:
+    return {
+        "overview": st.empty(),
+        "latest": st.empty(),
+        "tables": st.empty(),
+    }
 
 
 def render_candidate_detail(leaderboard: Sequence[Dict[str, Any]]) -> None:
@@ -1539,13 +1718,27 @@ def sidebar_controls() -> tuple[AgentRuntimeConfig, bool, Dict[str, Any]]:
         "workdir": runtime.agent.workdir,
     }
     if run_clicked:
-        with st.spinner("Running live alpha research agent..."):
-            try:
-                result = run_agent(runtime, approve_manual_submits=approve_manual_submits)
-                set_result(result, "Live agent run")
-                st.success("Live run completed.")
-            except Exception as exc:
-                st.error(f"Live run failed: {exc}")
+        live_state = create_live_state(runtime)
+        live_slots = make_live_slots()
+        render_live_progress(live_state, live_slots)
+
+        def progress_callback(event: Dict[str, Any]) -> None:
+            apply_progress_event(live_state, event)
+            render_live_progress(live_state, live_slots)
+
+        try:
+            result = run_agent(
+                runtime,
+                approve_manual_submits=approve_manual_submits,
+                progress_callback=progress_callback,
+            )
+            set_result(result, "Live agent run")
+            st.success("Live run completed.")
+        except Exception as exc:
+            live_state["status"] = "Failed"
+            live_state["latest_message"] = str(exc)
+            render_live_progress(live_state, live_slots)
+            st.error(f"Live run failed: {exc}")
     return runtime, approve_manual_submits, preview
 
 
