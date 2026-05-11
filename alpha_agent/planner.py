@@ -74,7 +74,7 @@ class HeuristicPlanner:
 
         submission_mode = str(context.get("submission_mode") or "disabled")
         best_submittable = context.get("best_submittable_alpha_id")
-        if stage in {"harvest", "robustness"} and submission_mode == "auto_approved" and best_submittable:
+        if stage == "harvest" and submission_mode == "auto_approved" and best_submittable:
             return PlannerAction(
                 action="submit_best",
                 rationale="Found submit-ready candidate and auto-approved mode is enabled.",
@@ -138,6 +138,16 @@ class HeuristicPlanner:
                 )
 
         if stage == "robustness":
+            if top_failed in {"SELF_CORRELATION", "PROD_CORRELATION"} and refine_available > 0 and not best_submittable:
+                return PlannerAction(
+                    action="evaluate_refine",
+                    batch_size=min(default_batch, refine_available),
+                    rationale="Quality frontier is correlation-blocked; run decorrelation repairs before robustness harvest.",
+                    hypothesis=f"Structural and neutralization repairs can reduce {top_failed} while preserving signal quality.",
+                    focus_family=leading_family,
+                    risk_note="Do not mark correlation-failed candidates as submission-ready.",
+                    raw={},
+                )
             if robustness_available > 0:
                 return PlannerAction(
                     action="evaluate_robustness",

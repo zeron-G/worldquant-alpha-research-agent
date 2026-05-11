@@ -57,6 +57,40 @@ class HeuristicPlannerTests(unittest.TestCase):
         )
         self.assertEqual(action.action, "evaluate_robustness")
 
+    def test_robustness_stage_does_not_auto_submit_before_harvest(self) -> None:
+        planner = HeuristicPlanner()
+        action = planner.decide(
+            {
+                "research_stage": "robustness",
+                "remaining_budget": 6,
+                "submission_mode": "auto_approved",
+                "best_submittable_alpha_id": "A123",
+                "robustness_candidates_available": 4,
+                "refine_candidates_available": 0,
+                "seed_queue_remaining": 0,
+                "seed_target_remaining": 0,
+                "iteration": 5,
+            }
+        )
+        self.assertEqual(action.action, "evaluate_robustness")
+
+    def test_robustness_stage_repairs_correlation_before_harvest(self) -> None:
+        planner = HeuristicPlanner()
+        action = planner.decide(
+            {
+                "research_stage": "robustness",
+                "remaining_budget": 6,
+                "robustness_candidates_available": 4,
+                "refine_candidates_available": 8,
+                "best_submittable_alpha_id": None,
+                "failed_check_histogram": [{"check": "PROD_CORRELATION", "count": 3}],
+                "seed_queue_remaining": 0,
+                "seed_target_remaining": 0,
+                "iteration": 5,
+            }
+        )
+        self.assertEqual(action.action, "evaluate_refine")
+
     def test_harvest_auto_submit(self) -> None:
         planner = HeuristicPlanner()
         action = planner.decide(

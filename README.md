@@ -6,8 +6,9 @@ Planner-driven, tool-using alpha research system for WorldQuant BRAIN with:
 - controlled simulation/check execution via existing API client
 - governance-first submission modes (`disabled`, `manual`, `auto_approved`)
 - hypothesis logging and failure-pattern-aware mutation logic
+- correlation-aware submission readiness and decorrelation repair candidates
 - reproducible JSON reports and baseline-vs-agent evaluation harness
-- interactive Streamlit app for live demo
+- presentation-ready Streamlit console with a built-in demo case, live controls, visual analytics, and economic logic
 
 Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https://github.com/zeron-G/worldquant-alpha-research-agent)
 
@@ -27,7 +28,7 @@ Repository: [https://github.com/zeron-G/worldquant-alpha-research-agent](https:/
   - `engine.py`: orchestrator loop, tool execution, submission gating, run reports
   - `evaluation.py`: baseline-vs-agent case-suite runner
 - `streamlit_app.py`  
-  Web app for interactive agent runs.
+  Presentation console for demo mode, live agent runs, parameter tuning, visual diagnostics, and economic analysis.
 - `docs/eval_cases.json`  
   Starter replay case suite.
 
@@ -83,6 +84,8 @@ This enforces reproducible, auditable planner decisions instead of free-form tex
 - `auto_approved`: allow unattended submit action when planner selects it
 
 By default, runs are safe (`disabled`).
+
+Submit readiness requires both quality checks and correlation checks to pass. A candidate that clears Sharpe/fitness/turnover but fails `SELF_CORRELATION` or `PROD_CORRELATION` is treated as a repair target, not as submit-ready. The agent also requires harvest stage before any agent-driven submission, so robustness evidence is collected first.
 
 ### 5) Pluggable Planning Backends
 
@@ -177,19 +180,42 @@ Output defaults to:
 
 - `<workdir>/evaluation/report.json`
 
-### Run Streamlit app
+### Run the Presentation Frontend
+
+For a classroom or pre demo, start with the frontend. It opens with a built-in showcase case, so it works even without a live WorldQuant session:
 
 ```powershell
-streamlit run .\streamlit_app.py
+python -m streamlit run .\streamlit_app.py
 ```
 
-The app provides:
+Then open the local URL printed by Streamlit, usually:
 
-- auth + planner config
-- run controls (budget/iterations/families)
-- quant controls (family budget share, novelty threshold, robustness gates)
-- submission safety mode controls
-- action timeline + stage history + hypothesis log + raw JSON report
+- `http://localhost:8501`
+
+Recommended presentation flow:
+
+1. Open the app and keep the built-in showcase loaded.
+2. Walk through `Overview` for the executive result, readiness funnel, stage machine, and convergence curve.
+3. Use `Agent Trace` to show planner actions, hypotheses, failure pressure, family frontier, and candidate details.
+4. Use `Economic Logic` to explain the constrained optimization view and adjust cost/value assumptions live.
+5. Use `Architecture` to explain design choices and show every hot-modifiable run parameter.
+6. Optionally use `Run Live Agent` from the sidebar only after configuring credentials or a cookie header.
+
+The presentation console provides:
+
+- built-in showcase case for fast, reliable presentation
+- full live controls for auth, LLM planner, budget, family filters, novelty, robustness, retries, polling, workdir, and submission governance
+- visual analytics for best score, quality-ready count, correlation-blocked candidates, submit-ready candidates, stage transitions, failure pressure, and family frontier
+- candidate inspector with expression, settings, metrics, and check summary
+- economic derivation panel showing alpha discovery as constrained expected utility maximization
+- raw JSON artifact viewer and downloadable report
+
+You can also load a saved run report from the sidebar with either:
+
+- `Load Latest Workdir Report`
+- `Run report JSON path`
+
+More presentation notes are in [`docs/PRESENTATION_FRONTEND.md`](docs/PRESENTATION_FRONTEND.md).
 
 ## Basic Tests
 

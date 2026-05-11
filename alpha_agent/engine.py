@@ -14,6 +14,7 @@ from alpha_agent.planner import HeuristicPlanner, PlannerAction
 from alpha_agent.research_logic import (
     ResearchNotebook,
     build_check_aware_refinements,
+    build_correlation_repair_candidates,
     build_robustness_candidates,
     dedupe_candidates,
     safe_float,
@@ -158,12 +159,16 @@ class ResearchToolbox:
             family_filter=set(self.agent_cfg.family_filter),
             blocked_families=blocked_families,
         )
+        correlation_repairs = build_correlation_repair_candidates(
+            top_records,
+            family_filter=set(self.agent_cfg.family_filter),
+        )
         check_aware = build_check_aware_refinements(
             top_records,
             family_filter=set(self.agent_cfg.family_filter),
             blocked_families=blocked_families,
         )
-        merged = dedupe_candidates(check_aware + generic)
+        merged = dedupe_candidates(correlation_repairs + check_aware + generic)
         fresh = [
             candidate
             for candidate in merged
@@ -224,10 +229,7 @@ class ResearchToolbox:
                 continue
             if target_alpha_id and alpha_id != target_alpha_id:
                 continue
-            if not record.get("precheck_submit_ready"):
-                continue
-            pending = record.get("summary", {}).get("pending") or []
-            if pending and not allow_pending:
+            if not pipeline.record_is_submit_ready(record, allow_pending_checks=allow_pending):
                 continue
             return record
         return None
@@ -437,7 +439,13 @@ class AlphaResearchAgent:
                 "executed_batch": len(records),
                 "ok_count": sum(1 for record in records if record.get("status") == "ok"),
                 "error_count": sum(1 for record in records if record.get("status") == "error"),
-                "submittable_count": sum(1 for record in records if record.get("precheck_submit_ready")),
+                "quality_ready_count": sum(1 for record in records if pipeline.record_quality_ready(record)),
+                "submittable_count": sum(1 for record in records if pipeline.record_is_submit_ready(record)),
+                "correlation_blocked_count": sum(
+                    1
+                    for record in records
+                    if pipeline.record_quality_ready(record) and record.get("failed_correlation_checks")
+                ),
                 "families": sorted({str(record.get("family") or "") for record in records}),
                 "failed_check_histogram": self.notebook.failed_check_histogram(self.toolbox.results, top_k=5),
                 "best_score_after": self._best_score(),
@@ -468,7 +476,15 @@ class AlphaResearchAgent:
             "submission_attempts_this_run": len(self.submission_attempts),
             "best_score": self._best_score(),
             "best_alpha_id": self._best_alpha_id(),
-            "submittable_count": sum(1 for record in self.toolbox.results if record.get("precheck_submit_ready")),
+            "quality_ready_count": sum(1 for record in self.toolbox.results if pipeline.record_quality_ready(record)),
+            "submittable_count": sum(
+                1 for record in self.toolbox.results if pipeline.record_is_submit_ready(record)
+            ),
+            "correlation_blocked_count": sum(
+                1
+                for record in self.toolbox.results
+                if pipeline.record_quality_ready(record) and record.get("failed_correlation_checks")
+            ),
             "iterations_executed": iteration_executed,
             "stop_reason": stop_reason,
             "submission_mode": self.runtime.agent.submission_mode,
@@ -518,6 +534,21 @@ class AlphaResearchAgent:
         stage: str,
     ) -> Optional[Dict[str, Any]]:
         mode = self.runtime.agent.submission_mode
+        if stage != "harvest":
+            self._append_event(
+                iteration=iteration,
+                stage=stage,
+                action="submit_best",
+                rationale=decision.rationale,
+                details={
+                    "result": "blocked",
+                    "reason": "Agent submissions require harvest stage after robustness evidence.",
+                },
+                hypothesis=decision.hypothesis,
+                risk_note=decision.risk_note,
+            )
+            return None
+
         candidate = self.toolbox.best_submittable_candidate(target_alpha_id=decision.target_alpha_id)
         if not candidate:
             self._append_event(

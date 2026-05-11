@@ -43,6 +43,17 @@ CORRELATION_CHECKS = {
     "SELF_CORRELATION",
     "PROD_CORRELATION",
 }
+SUBMISSION_BLOCKING_CHECKS = BLOCKING_CHECKS | CORRELATION_CHECKS
+CHECK_SEVERITY_WEIGHTS = {
+    "LOW_SHARPE": 220.0,
+    "LOW_FITNESS": 240.0,
+    "LOW_TURNOVER": 120.0,
+    "HIGH_TURNOVER": 180.0,
+    "CONCENTRATED_WEIGHT": 260.0,
+    "LOW_SUB_UNIVERSE_SHARPE": 220.0,
+    "SELF_CORRELATION": 360.0,
+    "PROD_CORRELATION": 520.0,
+}
 
 
 @dataclass(frozen=True)
@@ -237,7 +248,10 @@ def command_search(args: argparse.Namespace) -> Dict[str, Any]:
             submission_attempts=submission_attempts,
         )
     )
-    if args.stop_on_submittable and any(record.get("precheck_submit_ready") for record in evaluated_now):
+    if args.stop_on_submittable and any(
+        record_is_submit_ready(record, allow_pending_checks=args.allow_pending_checks)
+        for record in evaluated_now
+    ):
         all_results = results_store.read_all()
         leaderboard = build_leaderboard(all_results, family_filter=set(args.family or []), limit=10)
         state = write_state(state_path, all_results, submissions_store.read_all(), leaderboard)
@@ -365,9 +379,7 @@ def command_submit_best(args: argparse.Namespace) -> Dict[str, Any]:
         if checked > args.limit:
             break
         alpha_id = record.get("alpha_id")
-        if not alpha_id or not record.get("precheck_submit_ready"):
-            continue
-        if record.get("summary", {}).get("pending") and not args.allow_pending_checks:
+        if not alpha_id or not record_is_submit_ready(record, allow_pending_checks=args.allow_pending_checks):
             continue
         submission = attempt_submit(
             client=client,
@@ -644,8 +656,8 @@ def evaluate_batch(
         results_store.append(record)
         evaluated.append(record)
         alpha_id = record.get("alpha_id")
-        ready = bool(record.get("precheck_submit_ready"))
-        no_pending = not record.get("summary", {}).get("pending")
+        ready = record_is_submit_ready(record, allow_pending_checks=allow_pending_checks)
+        no_pending = not record_pending_checks(record)
         if (
             should_attempt_submit
             and alpha_id
@@ -694,6 +706,7 @@ def evaluate_candidate(
             blocking = failed_blocking_checks(check_payload)
             failed_all = failed_checks(check_payload)
             failed_corr = failed_correlation_checks(check_payload)
+            failed_submit = failed_submission_checks(check_payload)
             record = {
                 **candidate.to_record(),
                 "status": "ok",
@@ -707,8 +720,11 @@ def evaluate_candidate(
                 "failed_checks": failed_all,
                 "failed_blocking_checks": blocking,
                 "failed_correlation_checks": failed_corr,
+                "failed_submission_checks": failed_submit,
                 "correlation_pivot": should_pivot_away_from_check_payload(check_payload),
-                "precheck_submit_ready": not blocking,
+                "precheck_submit_ready": not failed_submit,
+                "quality_checks_ready": not blocking,
+                "check_diagnostics": check_diagnostics(check_payload),
                 "score": score_result(detail, check_payload),
                 "detail": {
                     "id": detail.get("id"),
@@ -796,6 +812,107 @@ def failed_correlation_checks(check_payload: Any) -> List[str]:
     return failed_checks(check_payload, CORRELATION_CHECKS)
 
 
+def failed_submission_checks(check_payload: Any) -> List[str]:
+    return failed_checks(check_payload, SUBMISSION_BLOCKING_CHECKS)
+
+
+def pending_checks(check_payload: Any, names: Optional[set[str]] = None) -> List[str]:
+    pending: List[str] = []
+    for check in extract_checks(check_payload):
+        if check.get("result") != "PENDING":
+            continue
+        name = str(check.get("name") or "")
+        if names is not None and name not in names:
+            continue
+        pending.append(name)
+    return pending
+
+
+def check_shortfall(check: Dict[str, Any]) -> Optional[float]:
+    name = str(check.get("name") or "")
+    limit = safe_float(check.get("limit"))
+    value = safe_float(check.get("value"))
+    if limit is None or value is None:
+        return None
+    if name in {"HIGH_TURNOVER", "CONCENTRATED_WEIGHT", "SELF_CORRELATION", "PROD_CORRELATION"}:
+        return max(0.0, value - limit)
+    return max(0.0, limit - value)
+
+
+def check_diagnostics(check_payload: Any) -> List[Dict[str, Any]]:
+    diagnostics: List[Dict[str, Any]] = []
+    for check in extract_checks(check_payload):
+        name = str(check.get("name") or "")
+        result = str(check.get("result") or "")
+        shortfall = check_shortfall(check)
+        severity = 0.0
+        if result == "FAIL":
+            severity = CHECK_SEVERITY_WEIGHTS.get(name, 100.0)
+            if shortfall is not None:
+                severity *= 1.0 + min(3.0, shortfall)
+        diagnostics.append(
+            {
+                "name": name,
+                "result": result,
+                "limit": safe_float(check.get("limit")),
+                "value": safe_float(check.get("value")),
+                "shortfall": shortfall,
+                "severity": round(severity, 4),
+                "is_quality_blocker": name in BLOCKING_CHECKS,
+                "is_correlation_blocker": name in CORRELATION_CHECKS,
+                "is_submission_blocker": name in SUBMISSION_BLOCKING_CHECKS,
+            }
+        )
+    return diagnostics
+
+
+def record_submission_failures(record: Dict[str, Any]) -> List[str]:
+    explicit = record.get("failed_submission_checks")
+    if isinstance(explicit, list):
+        return [str(name) for name in explicit if isinstance(name, str)]
+    names: set[str] = set()
+    for key in ("failed_blocking_checks", "failed_correlation_checks", "failed_checks"):
+        values = record.get(key) or []
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value in SUBMISSION_BLOCKING_CHECKS:
+                names.add(value)
+    summary_failed = record.get("summary", {}).get("failed") if isinstance(record.get("summary"), dict) else []
+    if isinstance(summary_failed, list):
+        for value in summary_failed:
+            if isinstance(value, str) and value in SUBMISSION_BLOCKING_CHECKS:
+                names.add(value)
+    return sorted(names)
+
+
+def record_pending_checks(record: Dict[str, Any]) -> List[str]:
+    summary_pending = record.get("summary", {}).get("pending") if isinstance(record.get("summary"), dict) else []
+    if isinstance(summary_pending, list):
+        return [str(name) for name in summary_pending if isinstance(name, str)]
+    return []
+
+
+def record_is_submit_ready(record: Dict[str, Any], *, allow_pending_checks: bool = False) -> bool:
+    if record.get("status") != "ok":
+        return False
+    if record_submission_failures(record):
+        return False
+    if record_pending_checks(record) and not allow_pending_checks:
+        return False
+    return True
+
+
+def record_quality_ready(record: Dict[str, Any]) -> bool:
+    if record.get("status") != "ok":
+        return False
+    explicit = record.get("failed_blocking_checks")
+    if isinstance(explicit, list):
+        return not explicit
+    failed = record.get("failed_checks") or []
+    return not any(name in BLOCKING_CHECKS for name in failed if isinstance(name, str))
+
+
 def should_pivot_away_from_check_payload(check_payload: Any) -> bool:
     return not failed_blocking_checks(check_payload) and bool(failed_correlation_checks(check_payload))
 
@@ -831,36 +948,40 @@ def score_result(detail: Dict[str, Any], check_payload: Any) -> float:
     drawdown = safe_float(is_data.get("drawdown")) or 0.0
     margin = safe_float(is_data.get("margin")) or 0.0
 
-    score = sharpe * 120.0
-    score += fitness * 160.0
-    score += returns * 250.0
-    score += margin * 20000.0
-    score -= drawdown * 120.0
+    score = sharpe * 140.0
+    score += fitness * 180.0
+    score += returns * 260.0
+    score += margin * 22000.0
+    score -= drawdown * 140.0
 
     for check in extract_checks(check_payload):
         name = str(check.get("name"))
         result = check.get("result")
-        limit = safe_float(check.get("limit"))
-        value = safe_float(check.get("value"))
+        shortfall = check_shortfall(check)
         if result == "PASS":
-            score += 20.0
+            score += 70.0 if name in CORRELATION_CHECKS else 24.0
         elif result == "WARNING":
             score -= 10.0
         elif result == "PENDING":
-            score -= 5.0
+            score -= 25.0 if name in SUBMISSION_BLOCKING_CHECKS else 5.0
         elif result == "FAIL":
-            score -= 80.0
-            if limit is not None and value is not None:
-                if name == "HIGH_TURNOVER":
-                    score -= max(0.0, value - limit) * 300.0
-                elif name == "CONCENTRATED_WEIGHT":
-                    score -= max(0.0, value - limit) * 1200.0
-                else:
-                    score -= max(0.0, limit - value) * 300.0
+            base_penalty = CHECK_SEVERITY_WEIGHTS.get(name, 100.0)
+            score -= base_penalty
+            if shortfall is not None:
+                multiplier = 900.0 if name in CORRELATION_CHECKS else 360.0
+                if name == "CONCENTRATED_WEIGHT":
+                    multiplier = 1400.0
+                score -= shortfall * multiplier
     if not failed_blocking_checks(check_payload):
-        score += 400.0
+        score += 320.0
+    if not failed_submission_checks(check_payload):
+        score += 520.0
+    elif not failed_blocking_checks(check_payload) and failed_correlation_checks(check_payload):
+        score += 120.0
     if 0.01 <= turnover <= 0.7:
         score += 40.0
+    elif turnover > 0.7:
+        score -= min(200.0, (turnover - 0.7) * 200.0)
     return round(score, 4)
 
 
@@ -1016,7 +1137,8 @@ def build_leaderboard(
         eligible.append(record)
     eligible.sort(
         key=lambda item: (
-            0 if item.get("precheck_submit_ready") else 1,
+            0 if record_is_submit_ready(item) else 1,
+            0 if record_quality_ready(item) else 1,
             -float(item.get("score") or -10000.0),
             -(safe_float(item.get("metrics", {}).get("sharpe")) or -999.0),
         )
@@ -1045,7 +1167,13 @@ def build_search_summary(
         "evaluated_now": len(evaluated_now),
         "ok_now": sum(1 for item in evaluated_now if item.get("status") == "ok"),
         "error_now": sum(1 for item in evaluated_now if item.get("status") == "error"),
-        "submittable_now": sum(1 for item in evaluated_now if item.get("precheck_submit_ready")),
+        "quality_ready_now": sum(1 for item in evaluated_now if record_quality_ready(item)),
+        "submittable_now": sum(1 for item in evaluated_now if record_is_submit_ready(item)),
+        "correlation_blocked_now": sum(
+            1
+            for item in evaluated_now
+            if record_quality_ready(item) and item.get("failed_correlation_checks")
+        ),
         "correlation_pivot_families": list(pivot_families),
         "submission_attempts": [compact_submission(item) for item in submission_attempts],
         "best_current": compact_record(leaderboard[0]) if leaderboard else None,
@@ -1074,8 +1202,11 @@ def compact_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "failed_checks": record.get("failed_checks"),
         "failed_blocking_checks": record.get("failed_blocking_checks"),
         "failed_correlation_checks": record.get("failed_correlation_checks"),
+        "failed_submission_checks": record_submission_failures(record),
         "correlation_pivot": record.get("correlation_pivot"),
-        "precheck_submit_ready": record.get("precheck_submit_ready"),
+        "quality_checks_ready": record_quality_ready(record),
+        "precheck_submit_ready": record_is_submit_ready(record),
+        "check_diagnostics": record.get("check_diagnostics"),
         "summary": record.get("summary"),
     }
 
@@ -1135,7 +1266,12 @@ def attempt_submit(
     max_wait: float,
     poll_interval: float,
 ) -> Dict[str, Any]:
-    pending = record.get("summary", {}).get("pending") or []
+    failed = record_submission_failures(record)
+    if failed:
+        raise BrainApiError(
+            f"Alpha {alpha_id} failed submission checks: {', '.join(failed)}"
+        )
+    pending = record_pending_checks(record)
     if pending and not allow_pending_checks:
         raise BrainApiError(
             f"Alpha {alpha_id} still has pending checks: {', '.join(map(str, pending))}"
@@ -1160,7 +1296,13 @@ def write_state(
         "result_count": len(results),
         "ok_count": sum(1 for record in results if record.get("status") == "ok"),
         "error_count": sum(1 for record in results if record.get("status") == "error"),
-        "submittable_count": sum(1 for record in results if record.get("precheck_submit_ready")),
+        "quality_ready_count": sum(1 for record in results if record_quality_ready(record)),
+        "correlation_blocked_count": sum(
+            1
+            for record in results
+            if record_quality_ready(record) and record.get("failed_correlation_checks")
+        ),
+        "submittable_count": sum(1 for record in results if record_is_submit_ready(record)),
         "submission_count": len(submissions),
         "best_candidate_key": leaderboard[0].get("candidate_key") if leaderboard else None,
         "best_alpha_id": leaderboard[0].get("alpha_id") if leaderboard else None,

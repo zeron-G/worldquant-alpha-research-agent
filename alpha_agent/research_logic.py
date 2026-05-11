@@ -62,6 +62,157 @@ def dedupe_candidates(candidates: Sequence[pipeline.Candidate]) -> List[pipeline
     return output
 
 
+def _failed_correlation_names(record: Dict[str, Any]) -> List[str]:
+    explicit = record.get("failed_correlation_checks")
+    if isinstance(explicit, list) and explicit:
+        return [str(name) for name in explicit if isinstance(name, str)]
+    summary_failed = record.get("summary", {}).get("failed") if isinstance(record.get("summary"), dict) else []
+    if not isinstance(summary_failed, list):
+        return []
+    return [
+        str(name)
+        for name in summary_failed
+        if isinstance(name, str) and name in pipeline.CORRELATION_CHECKS
+    ]
+
+
+def _split_top_level_sum(expression: str) -> Optional[Tuple[str, str]]:
+    depth = 0
+    for index, char in enumerate(expression):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == "+" and depth == 0:
+            left = expression[:index].strip()
+            right = expression[index + 1 :].strip()
+            if left and right:
+                return left, right
+    return None
+
+
+def build_correlation_repair_candidates(
+    top_records: Sequence[Dict[str, Any]],
+    *,
+    family_filter: set[str],
+) -> List[pipeline.Candidate]:
+    candidates: List[pipeline.Candidate] = []
+    for record in top_records:
+        if record.get("status") != "ok":
+            continue
+        family = str(record.get("family") or "")
+        if not family:
+            continue
+        if family_filter and family not in family_filter:
+            continue
+
+        failed_corr = _failed_correlation_names(record)
+        if not failed_corr:
+            continue
+
+        expression = str(record.get("expression") or "").strip()
+        if not expression:
+            continue
+        metadata = record.get("metadata") or {}
+        parent_key = record.get("candidate_key")
+        base_settings = pipeline.normalize_settings(record.get("settings") or {})
+        score_priority = safe_float(record.get("score")) or 0.0
+        priority_boost = 260.0 if "PROD_CORRELATION" in failed_corr else 180.0
+
+        setting_mutations: List[Tuple[str, str, Any, float]] = []
+        for neutralization in ("SECTOR", "INDUSTRY", "SUBINDUSTRY"):
+            if neutralization != str(base_settings.get("neutralization") or ""):
+                setting_mutations.append(("neutralization", f"neutral_{neutralization.lower()}", neutralization, 45.0))
+        current_trunc = safe_float(base_settings.get("truncation")) or 0.08
+        for truncation in (0.03, 0.05, 0.08, 0.10, 0.12):
+            if not math.isclose(current_trunc, truncation, abs_tol=1e-9):
+                setting_mutations.append(("truncation", f"trunc_{str(truncation).replace('.', '_')}", truncation, 35.0))
+        current_decay = int(base_settings.get("decay") or 0)
+        for decay in (0, 2, 4, 6, 8, 10):
+            if decay != current_decay:
+                setting_mutations.append(("decay", f"decay_{decay}", decay, 30.0))
+
+        for key, suffix, value, bonus in setting_mutations:
+            next_settings = copy.deepcopy(base_settings)
+            next_settings[key] = value
+            candidates.append(
+                pipeline.Candidate(
+                    expression=expression,
+                    settings=next_settings,
+                    family=family,
+                    idea_name=f"{record.get('idea_name')}.corr_{suffix}",
+                    stage=f"repair_correlation_{key}",
+                    priority=score_priority + priority_boost + bonus,
+                    parent_key=parent_key,
+                    metadata={
+                        **metadata,
+                        "correlation_repair": True,
+                        "focus_checks": sorted(failed_corr),
+                        "repair_type": key,
+                    },
+                )
+            )
+
+        structural_templates: List[Tuple[str, str, float]] = [
+            ("rank", "rank({expr})", 80.0),
+            ("group_rank_industry", "group_rank({expr}, industry)", 100.0),
+            ("group_neutralize_industry", "group_neutralize(rank({expr}), industry)", 110.0),
+            ("group_zscore_industry", "group_zscore({expr}, industry)", 90.0),
+            ("decay_linear_4", "ts_decay_linear({expr}, 4)", 70.0),
+            ("ts_rank_5", "ts_rank({expr}, 5)", 60.0),
+        ]
+        for name, template, bonus in structural_templates:
+            next_expression = template.format(expr=f"({expression})")
+            candidates.append(
+                pipeline.Candidate(
+                    expression=next_expression,
+                    settings=copy.deepcopy(base_settings),
+                    family=family,
+                    idea_name=f"{record.get('idea_name')}.corr_expr_{name}",
+                    stage="repair_correlation_expression",
+                    priority=score_priority + priority_boost + bonus,
+                    parent_key=parent_key,
+                    metadata={
+                        **metadata,
+                        "correlation_repair": True,
+                        "focus_checks": sorted(failed_corr),
+                        "repair_type": f"expression:{name}",
+                    },
+                )
+            )
+
+        split = _split_top_level_sum(expression)
+        if split:
+            left, right = split
+            recombinations = [
+                ("reweight_left", f"0.7 * ({left}) + ({right})", 95.0),
+                ("reweight_right", f"({left}) + 0.7 * ({right})", 95.0),
+                ("group_right", f"({left}) + group_rank(({right}), industry)", 115.0),
+                ("group_left", f"group_rank(({left}), industry) + ({right})", 105.0),
+                ("neutral_right", f"({left}) + group_neutralize(rank(({right})), industry)", 120.0),
+            ]
+            for name, next_expression, bonus in recombinations:
+                candidates.append(
+                    pipeline.Candidate(
+                        expression=next_expression,
+                        settings=copy.deepcopy(base_settings),
+                        family=family,
+                        idea_name=f"{record.get('idea_name')}.corr_combo_{name}",
+                        stage="repair_correlation_combo",
+                        priority=score_priority + priority_boost + bonus,
+                        parent_key=parent_key,
+                        metadata={
+                            **metadata,
+                            "correlation_repair": True,
+                            "focus_checks": sorted(failed_corr),
+                            "repair_type": f"combo:{name}",
+                        },
+                    )
+                )
+
+    return dedupe_candidates(candidates)
+
+
 def build_check_aware_refinements(
     top_records: Sequence[Dict[str, Any]],
     *,
@@ -398,7 +549,7 @@ class ResearchNotebook:
             bucket["attempts"] += 1
             if record.get("status") == "ok":
                 bucket["ok_count"] += 1
-                if record.get("precheck_submit_ready"):
+                if pipeline.record_is_submit_ready(record):
                     bucket["submittable_count"] += 1
                 score = safe_float(record.get("score"))
                 if score is not None:
@@ -436,7 +587,12 @@ class ResearchNotebook:
         records: Sequence[Dict[str, Any]],
     ) -> Tuple[str, str]:
         best_score = safe_float(leaderboard[0].get("score")) if leaderboard else None
-        submittable_count = sum(1 for item in records if item.get("precheck_submit_ready"))
+        submittable_count = sum(1 for item in records if pipeline.record_is_submit_ready(item))
+        correlation_blocked_count = sum(
+            1
+            for item in records
+            if pipeline.record_quality_ready(item) and _failed_correlation_names(item)
+        )
         robust_records = sum(
             1
             for item in records
@@ -446,7 +602,13 @@ class ResearchNotebook:
         if submittable_count > 0 and robust_records >= 2:
             stage = "harvest"
             reason = "At least one submit-ready alpha exists with robustness checks completed."
-        elif submittable_count > 0 or (best_score is not None and best_score >= self.robustness_score_threshold):
+        elif submittable_count > 0:
+            stage = "robustness"
+            reason = "Submit-ready frontier found; collect robustness evidence before harvest."
+        elif correlation_blocked_count > 0:
+            stage = "exploit"
+            reason = "Quality checks are passing but correlation checks still block submission; prioritize decorrelation repairs."
+        elif best_score is not None and best_score >= self.robustness_score_threshold:
             stage = "robustness"
             reason = "Strong frontier found, shifting from pure search to robustness validation."
         elif evaluated_total >= seed_target or iteration >= 3:
@@ -483,6 +645,12 @@ class ResearchNotebook:
             if isinstance(item.get("expression"), str)
         ]
         best_family = str(frontier_records[0].get("family") or "") if frontier_records else ""
+        frontier_failed = Counter()
+        for record in frontier_records[:8]:
+            for name in record.get("failed_checks") or []:
+                if isinstance(name, str):
+                    frontier_failed[name] += 1
+        correlation_pressure = any(name in pipeline.CORRELATION_CHECKS for name in frontier_failed)
         scored: List[Tuple[float, pipeline.Candidate]] = []
         for candidate in candidates:
             family = candidate.family
@@ -491,18 +659,22 @@ class ResearchNotebook:
             novelty = expression_novelty(candidate.expression, frontier_token_sets)
             priority_component = max(0.0, float(candidate.priority) / 1000.0)
             capped_penalty = -0.8 if self.is_family_capped(family) else 0.0
-            pivot_penalty = -0.5 if family in blocked_families else 0.0
+            is_corr_repair = bool(candidate.metadata.get("correlation_repair"))
+            pivot_penalty = 0.0 if is_corr_repair else (-0.5 if family in blocked_families else 0.0)
+            repair_bonus = 0.0
+            if is_corr_repair:
+                repair_bonus = 0.75 if correlation_pressure else 0.25
 
             if stage == "explore":
                 score = novelty * 0.65 + family_bonus * 0.25 + priority_component * 0.10
                 if novelty < self.min_expression_novelty:
                     score -= 0.25
             elif stage == "exploit":
-                score = novelty * 0.20 + family_bonus * 0.15 + priority_component * 0.65
+                score = novelty * 0.18 + family_bonus * 0.12 + priority_component * 0.62 + repair_bonus
             elif stage == "robustness":
                 robust_flag = 1.0 if candidate.metadata.get("robustness") else 0.0
                 family_match = 0.2 if best_family and family == best_family else 0.0
-                score = robust_flag * 0.60 + priority_component * 0.30 + family_match + novelty * 0.10
+                score = robust_flag * 0.55 + priority_component * 0.25 + family_match + novelty * 0.10 + repair_bonus
             else:  # harvest
                 robust_flag = 1.0 if candidate.metadata.get("robustness") else 0.0
                 score = robust_flag * 0.65 + priority_component * 0.30 + novelty * 0.05

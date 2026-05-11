@@ -169,8 +169,18 @@ It penalizes:
 - Drawdown
 - failed checks
 - magnitude of check shortfall where limits and values are available
+- production/self correlation failures more heavily than ordinary quality misses
 
 This approach works well for prioritizing the next experiments even when the absolute score has no standalone interpretation.
+
+## Submission Readiness
+
+The pipeline now separates two states that used to be easy to confuse:
+
+- `quality_checks_ready`: the alpha has passed the core quality checks such as Sharpe, fitness, turnover, concentration, and sub-universe Sharpe.
+- `precheck_submit_ready`: the alpha has passed both the quality checks and the submission-blocking correlation checks (`SELF_CORRELATION`, `PROD_CORRELATION`), with no pending checks unless explicitly allowed.
+
+This prevents a strong but production-correlated alpha from being ranked as truly submit-ready. Those candidates remain valuable frontier anchors, but they are routed into decorrelation repair instead of submission.
 
 ## Why JSONL Instead of a Database
 
@@ -231,4 +241,4 @@ It is weaker at:
 
 - automatically inventing novel decorrelation transforms against unseen production inventory
 
-That final step still benefits from human-guided hypothesis updates, which is why curated manual seeds remain an important part of the system.
+The agent now includes a dedicated decorrelation repair queue for that final step. It mutates neutralization, truncation, decay, expression wrappers, and two-leg combo weights around quality-ready but correlation-blocked candidates. Curated manual seeds still matter because production correlation is account- and inventory-dependent.
