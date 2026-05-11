@@ -27,4 +27,8 @@ test-results/
 screenshots/
 *.tmp
 
+web-pre/node_modules/
+web-pre/dist/
+web-pre/.vercel/
+
 .DS_Store
