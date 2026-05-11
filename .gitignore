@@ -1,16 +1,30 @@
 __pycache__/
 *.py[cod]
 *.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 .env
+.env.local
+.env.*.local
+.streamlit/secrets.toml
 .venv/
 venv/
 
 .alpha_pipeline/
 .alpha_pipeline_v2/
 .alpha_agent/
+evaluation/
+agent_runs/
 
 wqb_1578.js
 wqb_index.js
+playwright-report/
+test-results/
+screenshots/
+*.tmp
 
 .DS_Store

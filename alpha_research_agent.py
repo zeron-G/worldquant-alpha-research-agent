@@ -14,11 +14,14 @@ from alpha_agent.config import AgentConfig, AgentRuntimeConfig, AuthConfig, Mode
 from alpha_agent.engine import AlphaResearchAgent, ResearchToolbox
 from alpha_agent.evaluation import run_evaluation_suite
 from alpha_agent.planner import HeuristicPlanner, OpenAIJsonPlanner
+from local_env import load_local_dotenv
 from worldquant_brain_cli import API_BASE, BrainApiError, DEFAULT_MAX_WAIT, DEFAULT_POLL_INTERVAL, DEFAULT_TIMEOUT
 
 
 DEFAULT_AGENT_WORKDIR = Path(".alpha_agent")
 DEFAULT_EVAL_CASES = Path("docs") / "eval_cases.json"
+
+load_local_dotenv()
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,7 +103,7 @@ def add_common_agent_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--planner-model",
-        default=os.getenv("ALPHA_AGENT_PLANNER_MODEL", "gpt-4.1-mini"),
+        default=os.getenv("ALPHA_AGENT_PLANNER_MODEL", "gpt5.5"),
         help="Model name for planner provider.",
     )
     parser.add_argument(

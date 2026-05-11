@@ -126,11 +126,13 @@ $env:WQB_PASSWORD="your_password"
 $env:WQB_COOKIE_HEADER="sessionid=...; csrftoken=..."
 
 $env:ALPHA_AGENT_PLANNER_PROVIDER="heuristic"
-$env:ALPHA_AGENT_PLANNER_MODEL="gpt-4.1-mini"
+$env:ALPHA_AGENT_PLANNER_MODEL="gpt5.5"
 $env:ALPHA_AGENT_PLANNER_BASE_URL="https://api.openai.com/v1"
 $env:ALPHA_AGENT_PLANNER_API_KEY_ENV="OPENAI_API_KEY"
 $env:OPENAI_API_KEY="..."
 ```
+
+The CLI and Streamlit app load `.env` automatically on startup. Sidebar fields are prefilled from `.env` when values are present; otherwise they start from safe defaults or blank credential fields.
 
 ## Quick Start
 

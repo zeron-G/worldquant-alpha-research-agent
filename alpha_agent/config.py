@@ -20,7 +20,7 @@ class AuthConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     provider: str = "heuristic"
-    model: str = "gpt-4.1-mini"
+    model: str = "gpt5.5"
     temperature: float = 0.1
     base_url: str = "https://api.openai.com/v1"
     api_key_env: str = "OPENAI_API_KEY"

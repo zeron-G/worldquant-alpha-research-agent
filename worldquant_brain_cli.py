@@ -15,6 +15,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional
 
+from local_env import load_local_dotenv
+
 
 API_BASE = "https://api.worldquantbrain.com"
 ACCEPT_V2 = "application/json;version=2.0"
@@ -40,6 +42,8 @@ DEFAULT_REGULAR_SETTINGS: Dict[str, Any] = {
 }
 
 MISSING = object()
+
+load_local_dotenv()
 
 
 @dataclass

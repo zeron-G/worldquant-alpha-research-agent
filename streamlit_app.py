@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import math
+import os
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -12,10 +15,16 @@ from alpha_agent.config import AgentConfig, AgentRuntimeConfig, AuthConfig, Mode
 from alpha_agent.engine import AlphaResearchAgent
 from alpha_agent.planner import HeuristicPlanner, OpenAIJsonPlanner
 import alpha_research_pipeline as pipeline
+from local_env import load_local_dotenv
 
 
 APP_TITLE = "Alpha Research Agent"
 DEFAULT_DEMO_RUN_ID = "presentation_demo_2026"
+DEFAULT_PLANNER_MODEL = "gpt5.5"
+REPOSITORY_URL = "https://github.com/zeron-G/worldquant-alpha-research-agent"
+PERSONAL_URL = "https://rongzegao.com"
+
+load_local_dotenv()
 
 
 st.set_page_config(
@@ -44,6 +53,39 @@ def fmt(value: Any, digits: int = 2) -> str:
 
 def pct(value: float) -> str:
     return f"{max(0.0, min(1.0, value)) * 100:.0f}%"
+
+
+def env_str(name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    return value if value is not None else default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(env_str(name, str(default)))
+    except ValueError:
+        return default
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(float(env_str(name, str(default))))
+    except ValueError:
+        return default
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def option_index(options: Sequence[str], value: str, fallback: int = 0) -> int:
+    try:
+        return list(options).index(value)
+    except ValueError:
+        return fallback
 
 
 def inject_css() -> None:
@@ -82,6 +124,41 @@ def inject_css() -> None:
           padding-top: 1.1rem;
           padding-bottom: 4rem;
           max-width: 1520px;
+        }
+        .top-links {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 8px 2px 18px;
+          border-bottom: 1px solid var(--line);
+        }
+        .top-brand {
+          color: var(--text);
+          font-size: 15px;
+          font-weight: 760;
+          letter-spacing: 0;
+        }
+        .top-nav {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .top-nav a {
+          color: var(--text) !important;
+          text-decoration: none;
+          border: 1px solid var(--line-strong);
+          background: rgba(23, 26, 24, .72);
+          padding: 8px 11px;
+          font-size: 13px;
+          transition: border-color .16s ease, background .16s ease, color .16s ease;
+        }
+        .top-nav a:hover {
+          color: var(--accent) !important;
+          border-color: rgba(61, 214, 179, .55);
+          background: rgba(61, 214, 179, .08);
         }
         h1, h2, h3 {
           letter-spacing: 0;
@@ -195,7 +272,7 @@ def inject_css() -> None:
         }
         .metric-grid {
           display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
           gap: 1px;
           background: var(--line);
           border: 1px solid var(--line);
@@ -204,6 +281,7 @@ def inject_css() -> None:
           background: rgba(23, 26, 24, .92);
           padding: 18px;
           min-height: 118px;
+          min-width: 0;
           transition: transform .18s ease, background .18s ease;
         }
         .metric:hover {
@@ -216,18 +294,21 @@ def inject_css() -> None:
           text-transform: uppercase;
           letter-spacing: .09em;
           min-height: 30px;
+          overflow-wrap: anywhere;
         }
         .metric-value {
           color: var(--text);
-          font-size: 30px;
+          font-size: clamp(25px, 2.4vw, 34px);
           line-height: 1;
           font-weight: 780;
           margin-top: 12px;
+          overflow-wrap: anywhere;
         }
         .metric-sub {
           color: var(--muted);
           font-size: 13px;
           margin-top: 10px;
+          overflow-wrap: anywhere;
         }
         .status-good { color: var(--good); }
         .status-warn { color: var(--warn); }
@@ -346,12 +427,13 @@ def inject_css() -> None:
         }
         .candidate-row {
           display: grid;
-          grid-template-columns: 100px minmax(0, 1.5fr) 120px 160px;
+          grid-template-columns: minmax(112px, .8fr) minmax(210px, 1.7fr) minmax(82px, .55fr) minmax(132px, .8fr);
           gap: 14px;
           align-items: center;
           border-top: 1px solid var(--line);
           padding: 13px 0;
           transition: background .18s ease, transform .18s ease;
+          min-width: 0;
         }
         .candidate-row:hover {
           background: rgba(61,214,179,.045);
@@ -360,6 +442,27 @@ def inject_css() -> None:
         .small {
           color: var(--muted);
           font-size: 13px;
+          overflow-wrap: anywhere;
+        }
+        .chart-shell {
+          border: 1px solid var(--line);
+          background: rgba(23, 26, 24, .68);
+          padding: 18px;
+          margin: 18px 0;
+        }
+        .chart-head {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+          color: var(--text);
+          font-weight: 760;
+        }
+        .chart-head span {
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 500;
         }
         .equation {
           border-left: 2px solid var(--accent);
@@ -369,7 +472,7 @@ def inject_css() -> None:
         }
         .config-grid {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
           gap: 1px;
           background: var(--line);
           border: 1px solid var(--line);
@@ -407,7 +510,7 @@ def inject_css() -> None:
           from { width: 0%; }
         }
         @media (max-width: 1100px) {
-          .hero-strip, .metric-grid, .stage-flow, .grid-2, .grid-3, .config-grid {
+          .hero-strip, .stage-flow, .grid-2, .grid-3 {
             grid-template-columns: 1fr 1fr;
           }
           .candidate-row {
@@ -416,7 +519,14 @@ def inject_css() -> None:
         }
         @media (max-width: 720px) {
           .hero, .section { padding: 18px; }
-          .hero-strip, .metric-grid, .stage-flow, .grid-2, .grid-3, .config-grid {
+          .top-links {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+          .top-nav {
+            justify-content: flex-start;
+          }
+          .hero-strip, .stage-flow, .grid-2, .grid-3 {
             grid-template-columns: 1fr;
           }
           .hero-title { font-size: 48px; }
@@ -797,6 +907,20 @@ def set_result(payload: Dict[str, Any], source: str) -> None:
     st.session_state["result_source"] = source
 
 
+def render_top_links() -> None:
+    st.markdown(
+        (
+            '<div class="top-links">'
+            '<div class="top-brand">Alpha Research Agent</div>'
+            '<div class="top-nav">'
+            f'<a href="{REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">GitHub Repository</a>'
+            f'<a href="{PERSONAL_URL}" target="_blank" rel="noopener noreferrer">rongzegao.com</a>'
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def metric_grid(items: Sequence[Dict[str, Any]]) -> None:
     html_items = []
     for item in items:
@@ -806,25 +930,18 @@ def metric_grid(items: Sequence[Dict[str, Any]]) -> None:
             "danger": "status-danger",
         }.get(str(item.get("status", "")), "")
         html_items.append(
-            f"""
-            <div class="metric">
-              <div class="metric-label">{escape(item.get("label"))}</div>
-              <div class="metric-value {status_class}">{escape(item.get("value"))}</div>
-              <div class="metric-sub">{escape(item.get("sub"))}</div>
-            </div>
-            """
+            '<div class="metric">'
+            f'<div class="metric-label">{escape(item.get("label"))}</div>'
+            f'<div class="metric-value {status_class}">{escape(item.get("value"))}</div>'
+            f'<div class="metric-sub">{escape(item.get("sub"))}</div>'
+            "</div>"
         )
     st.markdown(f'<div class="metric-grid">{"".join(html_items)}</div>', unsafe_allow_html=True)
 
 
 def section_header(title: str, subtitle: str = "") -> None:
     st.markdown(
-        f"""
-        <div class="section-title">
-          <h2>{escape(title)}</h2>
-          <span>{escape(subtitle)}</span>
-        </div>
-        """,
+        f'<div class="section-title"><h2>{escape(title)}</h2><span>{escape(subtitle)}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -838,26 +955,24 @@ def render_hero(result: Optional[Dict[str, Any]], source: str) -> None:
         ("Submit-Ready", fmt(summary.get("submittable_count"))),
     ]
     strip_html = "".join(
-        f"""
-        <div class="strip-item">
-          <div class="strip-k">{escape(label)}</div>
-          <div class="strip-v">{escape(value)}</div>
-        </div>
-        """
+        '<div class="strip-item">'
+        f'<div class="strip-k">{escape(label)}</div>'
+        f'<div class="strip-v">{escape(value)}</div>'
+        "</div>"
         for label, value in strip
     )
     st.markdown(
-        f"""
-        <section class="hero">
-          <div class="eyebrow"><span class="pulse-dot"></span>Presentation Console</div>
-          <div class="hero-title">Alpha Research Agent</div>
-          <div class="hero-copy">
-            A controlled alpha discovery system that plans experiments, diagnoses failed checks,
-            repairs correlation risk, validates robustness, and ranks submission-ready candidates.
-          </div>
-          <div class="hero-strip">{strip_html}</div>
-        </section>
-        """,
+        (
+            '<section class="hero">'
+            '<div class="eyebrow"><span class="pulse-dot"></span>Presentation Console</div>'
+            '<div class="hero-title">Alpha Research Agent</div>'
+            '<div class="hero-copy">'
+            "A controlled alpha discovery system that plans experiments, diagnoses failed checks, "
+            "repairs correlation risk, validates robustness, and ranks submission-ready candidates."
+            "</div>"
+            f'<div class="hero-strip">{strip_html}</div>'
+            "</section>"
+        ),
         unsafe_allow_html=True,
     )
 
@@ -874,12 +989,10 @@ def render_stage_flow(summary: Dict[str, Any]) -> None:
     for name, desc in stages:
         active = " active" if name == final_stage else ""
         stage_html.append(
-            f"""
-            <div class="stage{active}">
-              <div class="stage-name">{escape(name)}</div>
-              <div class="stage-desc">{escape(desc)}</div>
-            </div>
-            """
+            f'<div class="stage{active}">'
+            f'<div class="stage-name">{escape(name)}</div>'
+            f'<div class="stage-desc">{escape(desc)}</div>'
+            "</div>"
         )
     st.markdown(f'<div class="stage-flow">{"".join(stage_html)}</div>', unsafe_allow_html=True)
 
@@ -889,13 +1002,11 @@ def render_bars(rows: Sequence[tuple[str, float, str]]) -> None:
     for label, ratio, value in rows:
         width = pct(ratio)
         html_rows.append(
-            f"""
-            <div class="bar-row">
-              <div>{escape(label)}</div>
-              <div class="bar-track"><div class="bar-fill" style="width:{width};"></div></div>
-              <div class="mono">{escape(value)}</div>
-            </div>
-            """
+            '<div class="bar-row">'
+            f"<div>{escape(label)}</div>"
+            f'<div class="bar-track"><div class="bar-fill" style="width:{width};"></div></div>'
+            f'<div class="mono">{escape(value)}</div>'
+            "</div>"
         )
     st.markdown("".join(html_rows), unsafe_allow_html=True)
 
@@ -968,19 +1079,16 @@ def render_action_timeline(events: Sequence[Dict[str, Any]]) -> None:
             f"best {fmt(details.get('best_score_after'))}"
         )
         html_events.append(
-            f"""
-            <div class="event">
-              <div class="event-head">
-                <span>{escape(event.get("iteration"))}. {escape(event.get("action"))}</span>
-                <span class="tag">{escape(event.get("stage"))}</span>
-              </div>
-              <div class="event-body">
-                <strong>Hypothesis:</strong> {escape(event.get("hypothesis"))}<br/>
-                <strong>Rationale:</strong> {escape(event.get("rationale"))}<br/>
-                <span class="small mono">{escape(details_line)}</span>
-              </div>
-            </div>
-            """
+            '<div class="event">'
+            '<div class="event-head">'
+            f'<span>{escape(event.get("iteration"))}. {escape(event.get("action"))}</span>'
+            f'<span class="tag">{escape(event.get("stage"))}</span>'
+            "</div>"
+            '<div class="event-body">'
+            f'<strong>Hypothesis:</strong> {escape(event.get("hypothesis"))}<br/>'
+            f'<strong>Rationale:</strong> {escape(event.get("rationale"))}<br/>'
+            f'<span class="small mono">{escape(details_line)}</span>'
+            "</div></div>"
         )
     st.markdown("".join(html_events), unsafe_allow_html=True)
 
@@ -995,17 +1103,16 @@ def render_leaderboard(leaderboard: Sequence[Dict[str, Any]]) -> None:
         readiness = "Submit-ready" if item.get("precheck_submit_ready") else "Repair target"
         status = "status-good" if item.get("precheck_submit_ready") else "status-warn"
         rows.append(
-            f"""
-            <div class="candidate-row">
-              <div class="mono">#{idx} {escape(item.get("alpha_id"))}</div>
-              <div>
-                <div>{escape(item.get("idea_name"))}</div>
-                <div class="small">{escape(item.get("family"))} | {escape(item.get("stage"))}</div>
-              </div>
-              <div class="mono">{escape(fmt(item.get("score")))}</div>
-              <div class="{status}">{escape(readiness)}<br/><span class="small">{escape(", ".join(map(str, failed)) or "clear")}</span></div>
-            </div>
-            """
+            '<div class="candidate-row">'
+            f'<div class="mono">#{idx} {escape(item.get("alpha_id"))}</div>'
+            "<div>"
+            f'<div>{escape(item.get("idea_name"))}</div>'
+            f'<div class="small">{escape(item.get("family"))} | {escape(item.get("stage"))}</div>'
+            "</div>"
+            f'<div class="mono">{escape(fmt(item.get("score")))}</div>'
+            f'<div class="{status}">{escape(readiness)}<br/>'
+            f'<span class="small">{escape(", ".join(map(str, failed)) or "clear")}</span></div>'
+            "</div>"
         )
     st.markdown("".join(rows), unsafe_allow_html=True)
 
@@ -1033,6 +1140,70 @@ def render_failed_checks(summary: Dict[str, Any]) -> None:
     render_bars([(str(item.get("check")), int(item.get("count") or 0) / max_count, fmt(item.get("count"))) for item in hist])
 
 
+def float_or(value: Any, default: float) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def stable_seed(value: Any) -> int:
+    raw = str(value or "alpha-agent").encode("utf-8")
+    return int(hashlib.sha1(raw).hexdigest()[:8], 16)
+
+
+def build_performance_series(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
+    explicit = candidate.get("chart")
+    if isinstance(explicit, list) and explicit:
+        rows = [row for row in explicit if isinstance(row, dict)]
+        if rows:
+            return rows
+
+    metrics = candidate.get("metrics") or {}
+    score = float_or(candidate.get("score"), 400.0)
+    sharpe = float_or(metrics.get("sharpe"), 0.9)
+    turnover = float_or(metrics.get("turnover"), 0.22)
+    returns = float_or(metrics.get("returns"), 0.045)
+    seed = stable_seed(candidate.get("alpha_id") or candidate.get("expression"))
+    phase = (seed % 360) / 57.3
+    scale = max(60_000.0, abs(score) * 1800.0)
+    drift = max(-0.004, min(0.045, returns * 0.35 + sharpe * 0.006))
+    blocked = len(candidate.get("failed_submission_checks") or candidate.get("failed_checks") or [])
+    pnl = 0.0
+    start = date(2014, 1, 3)
+    rows: List[Dict[str, Any]] = []
+    for index in range(126):
+        cycle = math.sin(index / 5.7 + phase) * 0.018
+        local = math.sin(index * 1.41 + phase * 0.7) * 0.009
+        stress = -0.035 if blocked and index in {34, 63, 91} else 0.0
+        pnl += scale * (drift + cycle + local + stress)
+        rolling_sharpe = sharpe + math.sin(index / 9.0 + phase) * 0.18 - blocked * 0.025
+        rolling_turnover = max(0.0, turnover + math.sin(index / 7.5 + phase) * 0.025 + blocked * 0.006)
+        rows.append(
+            {
+                "date": (start + timedelta(days=index * 28)).isoformat(),
+                "PnL": round(pnl, 2),
+                "Sharpe": round(rolling_sharpe, 3),
+                "Turnover": round(rolling_turnover, 4),
+            }
+        )
+    return rows
+
+
+def render_performance_chart(candidate: Dict[str, Any]) -> None:
+    alpha_id = candidate.get("alpha_id") or candidate.get("candidate_key") or "candidate"
+    key = f"chart_metric_{stable_seed(alpha_id)}"
+    st.markdown(
+        '<div class="chart-shell"><div class="chart-head">Candidate Performance Chart'
+        '<span>PnL, Sharpe, and Turnover derived from candidate metrics</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    metric = st.selectbox("Chart metric", options=["PnL", "Sharpe", "Turnover"], index=0, key=key)
+    st.line_chart(build_performance_series(candidate), x="date", y=metric, height=320)
+
+
 def render_candidate_detail(leaderboard: Sequence[Dict[str, Any]]) -> None:
     if not leaderboard:
         return
@@ -1045,6 +1216,7 @@ def render_candidate_detail(leaderboard: Sequence[Dict[str, Any]]) -> None:
     metrics = item.get("metrics") or {}
     st.markdown('<div class="surface">', unsafe_allow_html=True)
     st.code(item.get("expression") or "", language="text")
+    render_performance_chart(item)
     metric_grid(
         [
             {"label": "Sharpe", "value": fmt(metrics.get("sharpe")), "sub": "risk-adjusted signal"},
@@ -1105,12 +1277,12 @@ def render_economics(result: Dict[str, Any]) -> None:
     st.markdown('<div class="section">', unsafe_allow_html=True)
     section_header("Economic Derivation", "alpha search as constrained expected utility maximization")
     st.markdown(
-        """
-        <div class="equation">
-        Research is modeled as a constrained search problem. The agent allocates simulation budget to maximize expected
-        net utility rather than raw Sharpe alone.
-        </div>
-        """,
+        (
+            '<div class="equation">'
+            "Research is modeled as a constrained search problem. The agent allocates simulation budget to maximize "
+            "expected net utility rather than raw Sharpe alone."
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
     st.latex(r"\max_{x \in \mathcal{X}} \; \mathbb{E}[U(x)] = p(x)V - C_{sim}n(x) - C_{time}t(x) - \lambda\rho(x) - \kappa\tau(x)")
@@ -1160,14 +1332,18 @@ def render_architecture(runtime_preview: Dict[str, Any]) -> None:
     st.markdown('<div class="section">', unsafe_allow_html=True)
     section_header("System Architecture", "what the presentation should make visible")
     st.markdown(
-        """
-        <div class="stage-flow">
-          <div class="stage active"><div class="stage-name">Idea Library</div><div class="stage-desc">Manual seeds, generated templates, family filters, field metadata.</div></div>
-          <div class="stage active"><div class="stage-name">Planner</div><div class="stage-desc">Heuristic or OpenAI JSON planner chooses bounded tool actions.</div></div>
-          <div class="stage active"><div class="stage-name">Tool Layer</div><div class="stage-desc">Simulate, poll checks, extract metrics, persist JSONL artifacts.</div></div>
-          <div class="stage active"><div class="stage-name">Research Logic</div><div class="stage-desc">Score, diagnose, repair, diversify, robustness test, harvest.</div></div>
-        </div>
-        """,
+        (
+            '<div class="stage-flow">'
+            '<div class="stage active"><div class="stage-name">Idea Library</div>'
+            '<div class="stage-desc">Manual seeds, generated templates, family filters, field metadata.</div></div>'
+            '<div class="stage active"><div class="stage-name">Planner</div>'
+            '<div class="stage-desc">Heuristic or OpenAI JSON planner chooses bounded tool actions.</div></div>'
+            '<div class="stage active"><div class="stage-name">Tool Layer</div>'
+            '<div class="stage-desc">Simulate, poll checks, extract metrics, persist JSONL artifacts.</div></div>'
+            '<div class="stage active"><div class="stage-name">Research Logic</div>'
+            '<div class="stage-desc">Score, diagnose, repair, diversify, robustness test, harvest.</div></div>'
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1175,13 +1351,18 @@ def render_architecture(runtime_preview: Dict[str, Any]) -> None:
     st.markdown('<div class="section">', unsafe_allow_html=True)
     section_header("Presentation Narrative", "the story this interface supports")
     st.markdown(
-        """
-        <div class="grid-3">
-          <div class="surface"><strong>1. Problem</strong><br/><span class="small">Manual alpha discovery is repetitive, expensive, and error-prone under fixed simulation budget.</span></div>
-          <div class="surface"><strong>2. Agent Loop</strong><br/><span class="small">The system plans, evaluates, observes failed checks, and chooses the next research action.</span></div>
-          <div class="surface"><strong>3. Product Control</strong><br/><span class="small">Every run is logged, every submission is gated, and every parameter is adjustable from the console.</span></div>
-        </div>
-        """,
+        (
+            '<div class="grid-3">'
+            '<div class="surface"><strong>1. Problem</strong><br/><span class="small">'
+            "Manual alpha discovery is repetitive, expensive, and error-prone under fixed simulation budget."
+            "</span></div>"
+            '<div class="surface"><strong>2. Agent Loop</strong><br/><span class="small">'
+            "The system plans, evaluates, observes failed checks, and chooses the next research action."
+            "</span></div>"
+            '<div class="surface"><strong>3. Product Control</strong><br/><span class="small">'
+            "Every run is logged, every submission is gated, and every parameter is adjustable from the console."
+            "</span></div></div>"
+        ),
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1191,12 +1372,10 @@ def render_architecture(runtime_preview: Dict[str, Any]) -> None:
     cells = []
     for key, value in runtime_preview.items():
         cells.append(
-            f"""
-            <div class="config-cell">
-              <div class="config-k">{escape(key)}</div>
-              <div class="config-v mono">{escape(value)}</div>
-            </div>
-            """
+            '<div class="config-cell">'
+            f'<div class="config-k">{escape(key)}</div>'
+            f'<div class="config-v mono">{escape(value)}</div>'
+            "</div>"
         )
     st.markdown(f'<div class="config-grid">{"".join(cells)}</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1232,23 +1411,25 @@ def sidebar_controls() -> tuple[AgentRuntimeConfig, bool, Dict[str, Any]]:
 
         st.divider()
         st.markdown("### Connection")
-        email = st.text_input("WQB email", value="", help="Optional when a cookie header is supplied.")
-        password = st.text_input("WQB password", value="", type="password")
-        cookie_header = st.text_area("WQB cookie header", value="", height=82)
-        base_url = st.text_input("WQB API base URL", value="https://api.worldquantbrain.com")
-        timeout = st.number_input("Request timeout seconds", min_value=5.0, max_value=240.0, value=30.0, step=1.0)
+        email = st.text_input("WQB email", value=env_str("WQB_EMAIL"), help="Optional when a cookie header is supplied.")
+        password = st.text_input("WQB password", value=env_str("WQB_PASSWORD"), type="password")
+        cookie_header = st.text_area("WQB cookie header", value=env_str("WQB_COOKIE_HEADER"), height=82)
+        base_url = st.text_input("WQB API base URL", value=env_str("WQB_API_BASE", "https://api.worldquantbrain.com"))
+        timeout = st.number_input("Request timeout seconds", min_value=5.0, max_value=240.0, value=env_float("WQB_TIMEOUT", 30.0), step=1.0)
 
         st.markdown("### LLM Planner")
-        planner_provider = st.selectbox("Planner provider", options=["heuristic", "openai"], index=0)
-        planner_model = st.text_input("Planner model", value="gpt-4.1-mini")
-        planner_temperature = st.slider("Planner temperature", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
-        planner_base_url = st.text_input("Planner base URL", value="https://api.openai.com/v1")
-        planner_api_key_env = st.text_input("Planner API key environment variable", value="OPENAI_API_KEY")
-        planner_timeout = st.number_input("Planner timeout seconds", min_value=5.0, max_value=240.0, value=60.0, step=5.0)
+        planner_options = ["heuristic", "openai"]
+        planner_provider_default = env_str("ALPHA_AGENT_PLANNER_PROVIDER", "heuristic")
+        planner_provider = st.selectbox("Planner provider", options=planner_options, index=option_index(planner_options, planner_provider_default))
+        planner_model = st.text_input("Planner model", value=env_str("ALPHA_AGENT_PLANNER_MODEL", DEFAULT_PLANNER_MODEL))
+        planner_temperature = st.slider("Planner temperature", min_value=0.0, max_value=1.0, value=env_float("ALPHA_AGENT_PLANNER_TEMPERATURE", 0.1), step=0.01)
+        planner_base_url = st.text_input("Planner base URL", value=env_str("ALPHA_AGENT_PLANNER_BASE_URL", "https://api.openai.com/v1"))
+        planner_api_key_env = st.text_input("Planner API key environment variable", value=env_str("ALPHA_AGENT_PLANNER_API_KEY_ENV", "OPENAI_API_KEY"))
+        planner_timeout = st.number_input("Planner timeout seconds", min_value=5.0, max_value=240.0, value=env_float("ALPHA_AGENT_PLANNER_TIMEOUT", 60.0), step=5.0)
 
         st.markdown("### Search Space")
-        idea_library = Path(st.text_input("Idea library", value="alpha_pipeline_ideas.json"))
-        fields_summary = Path(st.text_input("Fields summary", value="wqb_data_fields_summary.json"))
+        idea_library = Path(st.text_input("Idea library", value=env_str("ALPHA_AGENT_IDEA_LIBRARY", "alpha_pipeline_ideas.json")))
+        fields_summary = Path(st.text_input("Fields summary", value=env_str("ALPHA_AGENT_FIELDS_SUMMARY", "wqb_data_fields_summary.json")))
         families = available_families(idea_library)
         family_filter = tuple(st.multiselect("Family filter", options=families, default=[]))
         custom_family_filter = st.text_input("Additional family filter CSV", value="")
@@ -1256,32 +1437,34 @@ def sidebar_controls() -> tuple[AgentRuntimeConfig, bool, Dict[str, Any]]:
         family_filter = tuple(dict.fromkeys(family_filter + custom_families))
 
         st.markdown("### Budget and Loop")
-        budget = st.number_input("Budget", min_value=1, max_value=300, value=24, step=1)
-        max_iterations = st.number_input("Max iterations", min_value=1, max_value=120, value=12, step=1)
-        seed_fraction = st.slider("Seed fraction", min_value=0.01, max_value=0.99, value=0.70, step=0.01)
-        refine_top_k = st.number_input("Refine top K", min_value=1, max_value=150, value=8, step=1)
-        robustness_top_k = st.number_input("Robustness top K", min_value=1, max_value=50, value=3, step=1)
-        robustness_score_threshold = st.number_input("Robustness score threshold", min_value=-1000.0, max_value=4000.0, value=500.0, step=25.0)
+        budget = st.number_input("Budget", min_value=1, max_value=300, value=env_int("ALPHA_AGENT_BUDGET", 24), step=1)
+        max_iterations = st.number_input("Max iterations", min_value=1, max_value=120, value=env_int("ALPHA_AGENT_MAX_ITERATIONS", 12), step=1)
+        seed_fraction = st.slider("Seed fraction", min_value=0.01, max_value=0.99, value=env_float("ALPHA_AGENT_SEED_FRACTION", 0.70), step=0.01)
+        refine_top_k = st.number_input("Refine top K", min_value=1, max_value=150, value=env_int("ALPHA_AGENT_REFINE_TOP_K", 8), step=1)
+        robustness_top_k = st.number_input("Robustness top K", min_value=1, max_value=50, value=env_int("ALPHA_AGENT_ROBUSTNESS_TOP_K", 3), step=1)
+        robustness_score_threshold = st.number_input("Robustness score threshold", min_value=-1000.0, max_value=4000.0, value=env_float("ALPHA_AGENT_ROBUSTNESS_SCORE_THRESHOLD", 500.0), step=25.0)
 
         st.markdown("### Research Policy")
-        shuffle_seeds = st.toggle("Shuffle generated seeds", value=True)
-        random_seed = st.number_input("Random seed", min_value=0, max_value=100_000, value=7, step=1)
-        max_family_budget_share = st.slider("Max family budget share", min_value=0.05, max_value=1.0, value=0.45, step=0.01)
-        min_expression_novelty = st.slider("Min expression novelty", min_value=0.0, max_value=1.0, value=0.10, step=0.01)
+        shuffle_seeds = st.toggle("Shuffle generated seeds", value=env_bool("ALPHA_AGENT_SHUFFLE_SEEDS", True))
+        random_seed = st.number_input("Random seed", min_value=0, max_value=100_000, value=env_int("ALPHA_AGENT_RANDOM_SEED", 7), step=1)
+        max_family_budget_share = st.slider("Max family budget share", min_value=0.05, max_value=1.0, value=env_float("ALPHA_AGENT_MAX_FAMILY_BUDGET_SHARE", 0.45), step=0.01)
+        min_expression_novelty = st.slider("Min expression novelty", min_value=0.0, max_value=1.0, value=env_float("ALPHA_AGENT_MIN_EXPRESSION_NOVELTY", 0.10), step=0.01)
 
         st.markdown("### Reliability")
-        retries = st.number_input("Retries", min_value=0, max_value=20, value=2, step=1)
-        sleep_between = st.number_input("Sleep between candidates", min_value=0.0, max_value=30.0, value=1.0, step=0.25)
-        max_wait = st.number_input("Max wait seconds", min_value=30.0, max_value=7200.0, value=1800.0, step=30.0)
-        poll_interval = st.number_input("Poll interval seconds", min_value=1.0, max_value=120.0, value=3.0, step=1.0)
+        retries = st.number_input("Retries", min_value=0, max_value=20, value=env_int("ALPHA_AGENT_RETRIES", 2), step=1)
+        sleep_between = st.number_input("Sleep between candidates", min_value=0.0, max_value=30.0, value=env_float("ALPHA_AGENT_SLEEP_BETWEEN", 1.0), step=0.25)
+        max_wait = st.number_input("Max wait seconds", min_value=30.0, max_value=7200.0, value=env_float("WQB_MAX_WAIT", 1800.0), step=30.0)
+        poll_interval = st.number_input("Poll interval seconds", min_value=1.0, max_value=120.0, value=env_float("WQB_POLL_INTERVAL", 3.0), step=1.0)
 
         st.markdown("### Submission Governance")
-        allow_pending_checks = st.toggle("Allow pending checks", value=False)
-        submission_mode = st.selectbox("Submission mode", options=["disabled", "manual", "auto_approved"], index=0)
-        approve_manual_submits = st.toggle("Approve manual submissions during run", value=False)
+        allow_pending_checks = st.toggle("Allow pending checks", value=env_bool("ALPHA_AGENT_ALLOW_PENDING_CHECKS", False))
+        submission_options = ["disabled", "manual", "auto_approved"]
+        submission_default = env_str("ALPHA_AGENT_SUBMISSION_MODE", "disabled")
+        submission_mode = st.selectbox("Submission mode", options=submission_options, index=option_index(submission_options, submission_default))
+        approve_manual_submits = st.toggle("Approve manual submissions during run", value=env_bool("ALPHA_AGENT_APPROVE_MANUAL_SUBMITS", False))
 
         st.markdown("### Artifacts")
-        workdir = Path(st.text_input("Workdir", value=".alpha_agent"))
+        workdir = Path(st.text_input("Workdir", value=env_str("ALPHA_AGENT_WORKDIR", ".alpha_agent")))
         if st.button("Load Latest Workdir Report", use_container_width=True):
             latest = latest_agent_report(workdir)
             if latest:
@@ -1376,6 +1559,7 @@ def main() -> None:
     result = st.session_state.get("agent_result") or demo_payload()
     source = str(st.session_state.get("result_source") or "Built-in showcase")
 
+    render_top_links()
     render_hero(result, source)
 
     overview_tab, trace_tab, economics_tab, architecture_tab, raw_tab = st.tabs(

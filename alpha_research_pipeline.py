@@ -26,6 +26,8 @@ from worldquant_brain_cli import (
     summarize_checks,
 )
 
+from local_env import load_local_dotenv
+
 
 DEFAULT_IDEA_LIBRARY = Path(__file__).with_name("alpha_pipeline_ideas.json")
 DEFAULT_FIELDS_SUMMARY = Path(__file__).with_name("wqb_data_fields_summary.json")
@@ -54,6 +56,8 @@ CHECK_SEVERITY_WEIGHTS = {
     "SELF_CORRELATION": 360.0,
     "PROD_CORRELATION": 520.0,
 }
+
+load_local_dotenv()
 
 
 @dataclass(frozen=True)
