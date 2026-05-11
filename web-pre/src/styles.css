@@ -592,14 +592,36 @@ h3 {
   background: rgba(61, 214, 179, 0.05);
 }
 
-.latex {
+.math-block {
   margin-top: 12px;
-  padding: 14px;
+  padding: 18px 20px;
   color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: rgba(15, 17, 16, 0.72);
   border: 1px solid var(--line);
   overflow-x: auto;
+  white-space: nowrap;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(21px, 2.05vw, 32px);
+  line-height: 1.45;
+}
+
+.math-block.compact {
+  font-size: clamp(21px, 1.8vw, 29px);
+}
+
+.math-op {
+  display: inline-block;
+  margin-right: 16px;
+  font-style: italic;
+}
+
+.math-expr {
+  display: inline-block;
+}
+
+.math-block sub {
+  font-size: 0.66em;
+  line-height: 0;
 }
 
 .range-control {

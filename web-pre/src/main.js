@@ -4,12 +4,12 @@ const REPOSITORY_URL = "https://github.com/zeron-G/worldquant-alpha-research-age
 const PERSONAL_URL = "https://rongzegao.com";
 
 const result = {
-  run_id: "presentation_demo_2026",
+  run_id: "alpha_service_showcase_2026",
   started_at: "2026-05-10T14:00:00-0400",
   finished_at: "2026-05-10T14:06:18-0400",
-  report_path: "built-in presentation showcase",
+  report_path: "built-in service showcase",
   summary: {
-    run_id: "presentation_demo_2026",
+    run_id: "alpha_service_showcase_2026",
     started_at: "2026-05-10T14:00:00-0400",
     finished_at: "2026-05-10T14:06:18-0400",
     budget: 24,
@@ -23,7 +23,7 @@ const result = {
     correlation_blocked_count: 4,
     submittable_count: 2,
     iterations_executed: 5,
-    stop_reason: "Presentation demo completed with submission mode disabled.",
+    stop_reason: "Service showcase completed with submission mode disabled.",
     submission_mode: "disabled",
     final_stage: "harvest",
     stage_history: [
@@ -261,7 +261,7 @@ const result = {
       iteration: 5,
       stage: "harvest",
       action: "stop",
-      rationale: "Presentation mode stops before any live submission.",
+      rationale: "Service mode stops before any live submission.",
       hypothesis: "The agent has produced a ranked, auditable submit-ready frontier.",
       risk_note: "Submission mode remains disabled for classroom demonstration.",
       details: {
@@ -285,8 +285,8 @@ const result = {
     best_alpha_id: "A-DEMO-7421",
     best_score: 1288.4,
   },
-  presentation: {
-    source: "Built-in presentation case",
+  service: {
+    source: "Built-in service case",
     score_curve: [
       { iteration: 1, best_score: 402.8, submittable: 0, quality_ready: 1 },
       { iteration: 2, best_score: 846.1, submittable: 0, quality_ready: 2 },
@@ -480,7 +480,7 @@ function renderSidebar() {
   const area = (label, value) => `<label class="side-control"><span>${label}</span><textarea readonly>${escapeHtml(value)}</textarea></label>`;
   const select = (label, value) => `<label class="side-control"><span>${label}</span><select><option>${escapeHtml(value)}</option></select></label>`;
   return `<aside data-testid="stSidebar" class="sidebar">
-    <h3>Presentation</h3>
+    <h3>Alpha Console</h3>
     <button class="primary-side" type="button">Load Showcase Case</button>
     ${input("Run report JSON path", "")}
     <button type="button">Load Report Path</button>
@@ -544,13 +544,13 @@ function renderTopLinks() {
 function renderHero() {
   const summary = result.summary;
   const strip = [
-    ["Run Source", "Built-in showcase"],
+    ["Run Source", "Built-in service"],
     ["Final Stage", summary.final_stage],
     ["Best Score", fmt(summary.best_score)],
     ["Submit-Ready", fmt(summary.submittable_count)],
   ];
   return `<section class="hero">
-    <div class="eyebrow"><span class="pulse-dot"></span>Presentation Console</div>
+    <div class="eyebrow"><span class="pulse-dot"></span>Alpha Console</div>
     <div class="hero-title">Alpha Research Agent</div>
     <div class="hero-copy">A controlled alpha discovery system that plans experiments, diagnoses failed checks, repairs correlation risk, validates robustness, and ranks submission-ready candidates.</div>
     <div class="hero-strip">${strip
@@ -577,9 +577,9 @@ function renderStageFlow(summary) {
 function renderOverview() {
   const summary = result.summary;
   const evaluated = Math.max(1, Number(summary.evaluated_this_run || summary.evaluated_count || 1));
-  const curve = result.presentation.score_curve;
+  const curve = result.service.score_curve;
   return `<section class="section">
-    ${sectionHeader("Executive Overview", "presentation-ready run state")}
+    ${sectionHeader("Executive Overview", "live run state")}
     ${metricGrid([
       { label: "Best Score", value: fmt(summary.best_score), sub: summary.best_alpha_id, status: "good" },
       { label: "Evaluated This Run", value: fmt(summary.evaluated_this_run), sub: `budget ${fmt(summary.budget)}` },
@@ -742,13 +742,19 @@ function renderEconomics() {
   return `<section class="section">
     ${sectionHeader("Economic Derivation", "alpha search as constrained expected utility maximization")}
     <div class="equation">Research is modeled as a constrained search problem. The agent allocates simulation budget to maximize expected net utility rather than raw Sharpe alone.</div>
-    <div class="latex">max E[U(x)] = p(x)V - C_sim n(x) - C_time t(x) - lambda rho(x) - kappa tau(x)</div>
-    <div class="latex">submit-ready(x)=1 iff g_q(x)<=0, g_self(x)<=0, g_prod(x)<=0, pending(x)=0</div>
-    <div class="latex">Sharpe ~= IC * sqrt(Breadth), Net Edge ~= Gross Edge - Turnover Cost</div>
+    <div class="math-block">
+      <span class="math-op">max</span><span class="math-expr">E[U(x)] = p(x)V - C<sub>sim</sub> n(x) - C<sub>time</sub> t(x) - &lambda;&rho;(x) - &kappa;&tau;(x)</span>
+    </div>
+    <div class="math-block">
+      <span class="math-expr">submit-ready(x) = 1 &iff; g<sub>q</sub>(x) &le; 0, g<sub>self</sub>(x) &le; 0, g<sub>prod</sub>(x) &le; 0, pending(x) = 0</span>
+    </div>
+    <div class="math-block">
+      <span class="math-expr">Sharpe &asymp; IC &middot; &radic;Breadth, &nbsp; Net Edge &asymp; Gross Edge - Turnover Cost</span>
+    </div>
   </section>
   <div class="grid-2 economics-grid">
     <section class="section">
-      ${sectionHeader("Hot Economic Assumptions", "change these during the presentation")}
+      ${sectionHeader("Hot Economic Assumptions", "tune these live")}
       ${slider("payout", "Estimated value of one accepted alpha", 500, 10000, 3000, 250, "$")}
       ${slider("simulation", "Cost per simulation/check call", 0.05, 10, 0.8, 0.05, "$")}
       ${slider("minutes", "Manual analyst minutes per candidate", 1, 25, 8, 0.5, "")}
@@ -758,7 +764,9 @@ function renderEconomics() {
     <section class="section">
       ${sectionHeader("Decision Economics", "continue search while marginal value is positive")}
       <div id="economics-metrics"></div>
-      <div class="latex">MVB = Pr(submit-ready | signal) * V - C_sim - C_time - C_risk</div>
+      <div class="math-block compact">
+        <span class="math-expr">MVB = Pr(submit-ready &mid; signal) &middot; V - C<sub>sim</sub> - C<sub>time</sub> - C<sub>risk</sub></span>
+      </div>
     </section>
   </div>`;
 }
@@ -774,8 +782,8 @@ function slider(id, label, min, max, value, step, prefix) {
 function updateEconomics() {
   const get = (id) => Number(document.getElementById(id)?.value || 0);
   const summary = result.summary;
-  const agent = result.presentation.agent;
-  const baseline = result.presentation.baseline;
+  const agent = result.service.agent;
+  const baseline = result.service.baseline;
   const evaluated = Number(summary.evaluated_this_run || agent.evaluated || 1);
   const submittable = Number(summary.submittable_count || agent.submittable || 0);
   const payoutValue = get("payout");
@@ -821,7 +829,7 @@ function renderArchitecture() {
     )
     .join("");
   return `<section class="section">
-    ${sectionHeader("System Architecture", "what the presentation should make visible")}
+    ${sectionHeader("System Architecture", "what the service exposes")}
     <div class="stage-flow">
       <div class="stage active"><div class="stage-name">Idea Library</div><div class="stage-desc">Manual seeds, generated templates, family filters, field metadata.</div></div>
       <div class="stage active"><div class="stage-name">Planner</div><div class="stage-desc">Heuristic or OpenAI JSON planner chooses bounded tool actions.</div></div>
@@ -830,7 +838,7 @@ function renderArchitecture() {
     </div>
   </section>
   <section class="section">
-    ${sectionHeader("Presentation Narrative", "the story this interface supports")}
+    ${sectionHeader("Product Narrative", "the story this interface supports")}
     <div class="grid-3">
       <div class="surface"><strong>1. Problem</strong><br /><span class="small">Manual alpha discovery is repetitive, expensive, and error-prone under fixed simulation budget.</span></div>
       <div class="surface"><strong>2. Agent Loop</strong><br /><span class="small">The system plans, evaluates, observes failed checks, and chooses the next research action.</span></div>
@@ -847,7 +855,7 @@ function renderRaw() {
   return `<section class="section">
     ${sectionHeader("Raw Artifacts", "audit trail for reproducibility")}
     <details class="json-block" open>
-      <summary>presentation_demo_2026.json</summary>
+      <summary>alpha_service_showcase_2026.json</summary>
       <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
     </details>
     <button id="download-json" type="button">Download current report JSON</button>
@@ -868,7 +876,7 @@ function renderApp() {
     <main class="block-container">
       ${renderTopLinks()}
       ${renderHero()}
-      <nav class="tabs" aria-label="Presentation tabs">
+      <nav class="tabs" aria-label="Service tabs">
         ${tabs.map(([id, label], index) => `<button type="button" data-tab="${id}" aria-selected="${index === 0}">${label}</button>`).join("")}
       </nav>
       ${tabs.map(([id, , renderer], index) => `<div class="tab-panel${index === 0 ? " active" : ""}" id="tab-${id}">${renderer()}</div>`).join("")}
